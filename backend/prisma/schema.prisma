@@ -1,0 +1,291 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  VENDOR
+  CLIENT
+  ADMIN
+}
+
+enum VendorStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model User {
+  id                  String        @id @default(cuid())
+  email               String        @unique
+  password            String
+  firstName           String?
+  lastName            String?
+  phoneNumber         String?
+  avatarUrl           String?
+  emailVerified       Boolean       @default(false)
+  verificationToken   String?       @unique
+  verificationExpiry  DateTime?
+  activeRole          UserRole      @default(CLIENT)
+  hasVendorProfile    Boolean       @default(false)
+  hasClientProfile    Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  // Profiles
+  vendorProfile       VendorProfile?
+  clientProfile       ClientProfile?
+  
+  // Role switching
+  roleSwitches        RoleSwitch[]
+  
+  // Authentication
+  sessions            Session[]
+  refreshTokens       RefreshToken[]
+  
+  // Notifications
+  notifications       Notification[]
+  
+  @@index([email])
+  @@index([activeRole])
+  @@index([verificationToken])
+}
+
+model RoleSwitch {
+  id        String   @id @default(cuid())
+  userId    String
+  fromRole  UserRole
+  toRole    UserRole
+  switchedAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([switchedAt])
+}
+
+model VendorProfile {
+  id              String        @id @default(cuid())
+  userId          String        @unique
+  businessName    String
+  businessEmail   String        @unique
+  businessPhone   String
+  businessAddress String?
+  city            String
+  country         String        @default("UK")
+  category        String
+  description     String?
+  website         String?
+  status          VendorStatus  @default(PENDING)
+  isVerified      Boolean       @default(false)
+  rating          Float?        @default(0)
+  totalReviews    Int           @default(0)
+  serviceAreas    String[]
+  portfolioImages String[]
+  whatsappEnabled Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  servicePackages ServicePackage[]
+  bookings        Booking[]
+  reviews         Review[]
+  subscriptions   VendorSubscription[]
+  
+  @@index([businessName])
+  @@index([city])
+  @@index([category])
+  @@index([status])
+}
+
+model ClientProfile {
+  id            String    @id @default(cuid())
+  userId        String    @unique
+  companyName   String?
+  address       String?
+  city          String?
+  country       String?   @default("UK")
+  eventTypes    String[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings      Booking[]
+  reviews       Review[]
+  
+  @@index([companyName])
+}
+
+model ServicePackage {
+  id            String    @id @default(cuid())
+  vendorId      String
+  title         String
+  description   String
+  price         Float
+  currency      String    @default("GBP")
+  duration      Int
+  inclusions    String[]
+  isActive      Boolean   @default(true)
+  minBooking    Int?      @default(1)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  vendor        VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  bookings      Booking[]
+  
+  @@index([vendorId])
+  @@index([price])
+}
+
+model Booking {
+  id              String        @id @default(cuid())
+  clientId        String
+  vendorId        String
+  packageId       String
+  eventDate       DateTime
+  eventLocation   String
+  guestCount      Int?
+  specialRequests String?
+  status          BookingStatus @default(PENDING)
+  totalAmount     Float
+  depositAmount   Float?
+  commissionRate  Float         @default(0.15)
+  paymentStatus   PaymentStatus @default(PENDING)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  client          ClientProfile @relation(fields: [clientId], references: [id])
+  vendor          VendorProfile @relation(fields: [vendorId], references: [id])
+  package         ServicePackage @relation(fields: [packageId], references: [id])
+  review          Review?
+  
+  @@index([clientId])
+  @@index([vendorId])
+  @@index([eventDate])
+  @@index([status])
+  @@index([paymentStatus])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+model RefreshToken {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+model SubscriptionPlan {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  price       Float
+  currency    String    @default("GBP")
+  features    Json
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  subscriptions VendorSubscription[]
+  
+  @@index([name])
+  @@index([isActive])
+}
+
+model VendorSubscription {
+  id              String   @id @default(cuid())
+  vendorId        String
+  planId          String
+  status          String   @default("ACTIVE")
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  stripeSubscriptionId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  vendor          VendorProfile @relation(fields: [vendorId], references: [id])
+  plan            SubscriptionPlan @relation(fields: [planId], references: [id])
+  
+  @@index([vendorId])
+  @@index([status])
+  @@index([currentPeriodEnd])
+}
+
+model Review {
+  id          String   @id @default(cuid())
+  bookingId   String   @unique
+  clientId    String
+  vendorId    String
+  rating      Int
+  comment     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  booking     Booking  @relation(fields: [bookingId], references: [id])
+  client      ClientProfile @relation(fields: [clientId], references: [id])
+  vendor      VendorProfile @relation(fields: [vendorId], references: [id])
+  
+  @@index([vendorId])
+  @@index([clientId])
+  @@index([rating])
+  @@index([createdAt])
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String
+  title       String
+  message     String
+  isRead      Boolean  @default(false)
+  data        Json?
+  createdAt   DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@index([type])
+}
