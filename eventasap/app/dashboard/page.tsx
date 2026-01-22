@@ -1,7 +1,7 @@
 // app/dashboard/page.tsx
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import DashboardLayout from '../components/dashboard/dashboardLayout';
 import {
     Calendar,
@@ -17,8 +17,52 @@ import {
     ArrowUpRight,
     ArrowDownRight
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+
+const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export default function DashboardPage() {
+
+    const [user, setUser] = useState<any>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const router = useRouter();
+
+    useEffect(() => {
+        fetchUserData();
+    }, []);
+
+    const fetchUserData = async () => {
+        try {
+            const token = localStorage.getItem('accessToken');
+            if (!token) {
+                router.push('/login');
+                return;
+            }
+
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/auth/me`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch user data');
+            }
+
+            const data = await response.json();
+            setUser(data.data.user);
+
+            // Store user in localStorage for quick access
+            localStorage.setItem('user', JSON.stringify(data.data.user));
+        } catch (error) {
+            toast.error('Session expired. Please login again.');
+            router.push('/login');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     // Mock data - in real app, fetch from API
     const stats = {
         totalBookings: 12,
@@ -50,15 +94,38 @@ export default function DashboardPage() {
         { id: 3, message: 'Your vendor profile is now verified!', time: '2 days ago', type: 'success' },
     ];
 
+    // Show loading state while fetching user data
+    if (isLoading) {
+        return (
+            <div className="flex items-center justify-center min-h-screen">
+                <div className="text-center">
+                    <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p className="text-gray-600">Loading dashboard...</p>
+                </div>
+            </div>
+        );
+    }
+
+    // Show error state if user data failed to load
+    if (!user) {
+        return (
+            <div className="flex items-center justify-center min-h-screen">
+                <div className="text-center">
+                    <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+                    <p className="text-gray-600">Failed to load user data</p>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <>
-
             <div className="space-y-6">
                 {/* Welcome Header */}
                 <div className="bg-gradient-to-r from-orange-500 to-purple-600 rounded-2xl p-6 text-white">
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between">
                         <div>
-                            <h1 className="text-2xl font-bold mb-2">Welcome back, John!</h1>
+                            <h1 className="text-2xl font-bold mb-2">Welcome back, {user.firstName}!</h1>
                             <p className="text-orange-100">
                                 Here's what's happening with your business today.
                             </p>
@@ -66,7 +133,7 @@ export default function DashboardPage() {
                         <div className="mt-4 md:mt-0">
                             <div className="flex items-center space-x-2 bg-white/20 backdrop-blur-sm rounded-xl px-4 py-2">
                                 <Sparkles className="w-5 h-5" />
-                                <span className="font-medium">Vendor Mode Active</span>
+                                <span className="font-medium">{user.role} Mode</span>
                             </div>
                         </div>
                     </div>
@@ -250,8 +317,6 @@ export default function DashboardPage() {
                     </div>
                 </div>
             </div>
-
         </>
-
     );
 }

@@ -1,7 +1,7 @@
 // components/registration/UnifiedRegistrationWithVerification.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -23,11 +23,27 @@ import {
     ArrowLeft,
     Eye,
     EyeOff,
-    Send
+    Send,
+    Search
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const NEXT_AUTH_PATH = process.env.NEXT_PUBLIC_API_URL
+
+// Types for location data
+interface Country {
+    name: string;
+    code: string;
+}
+
+interface State {
+    name: string;
+    state_code: string;
+}
+
+interface City {
+    name: string;
+}
 
 interface RegistrationData {
     email: string;
@@ -43,6 +59,7 @@ interface RegistrationData {
         businessPhone: string;
         city: string;
         country: string;
+        state: string; // Added state field
         category: string;
         description: string;
         serviceAreas: string[];
@@ -61,6 +78,15 @@ const UnifiedRegistration = () => {
     const [registeredEmail, setRegisteredEmail] = useState('');
     const [resendLoading, setResendLoading] = useState(false);
 
+    // Location API states
+    const [countries, setCountries] = useState<Country[]>([]);
+    const [states, setStates] = useState<State[]>([]);
+    const [cities, setCities] = useState<City[]>([]);
+    const [isLoadingCountries, setIsLoadingCountries] = useState(false);
+    const [isLoadingStates, setIsLoadingStates] = useState(false);
+    const [isLoadingCities, setIsLoadingCities] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+
     const [formData, setFormData] = useState<RegistrationData>({
         email: '',
         password: '',
@@ -74,7 +100,8 @@ const UnifiedRegistration = () => {
             businessEmail: '',
             businessPhone: '',
             city: '',
-            country: 'UK',
+            country: '',
+            state: '',
             category: '',
             description: '',
             serviceAreas: [],
@@ -100,19 +127,122 @@ const UnifiedRegistration = () => {
         'Other'
     ];
 
-    const ukCities = [
-        'London', 'Manchester', 'Birmingham', 'Leeds', 'Glasgow',
-        'Liverpool', 'Bristol', 'Sheffield', 'Edinburgh', 'Cardiff',
-        'Belfast', 'Newcastle', 'Nottingham', 'Brighton', 'Oxford',
-        'Cambridge', 'York', 'Bath', 'Reading', 'Southampton'
-    ];
+    // Fetch countries on component mount
+    useEffect(() => {
+        fetchCountries();
+    }, []);
 
-    const steps = [
-        { number: 1, title: 'Account Type', description: 'Choose your role' },
-        { number: 2, title: 'Personal Details', description: 'Basic information' },
-        { number: 3, title: 'Vendor Details', description: 'Business information' },
-        { number: 4, title: 'Complete', description: 'Verify your email' }
-    ];
+    // Fetch states when country changes
+    useEffect(() => {
+        if (formData.createVendorProfile && formData.vendorData?.country) {
+            fetchStates(formData.vendorData.country);
+        } else {
+            setStates([]);
+            setCities([]);
+        }
+    }, [formData.vendorData?.country, formData.createVendorProfile]);
+
+    // Fetch cities when state changes
+    useEffect(() => {
+        if (formData.createVendorProfile && formData.vendorData?.country && formData.vendorData?.state) {
+            fetchCities(formData.vendorData.country, formData.vendorData.state);
+        } else {
+            setCities([]);
+        }
+    }, [formData.vendorData?.country, formData.vendorData?.state, formData.createVendorProfile]);
+
+    // Fetch all countries from API
+    const fetchCountries = async () => {
+        setIsLoadingCountries(true);
+        try {
+            const response = await fetch('https://countriesnow.space/api/v0.1/countries');
+            const data = await response.json();
+
+            if (data.error === false && data.data) {
+                const sortedCountries = data.data
+                    .map((country: any) => ({
+                        name: country.country,
+                        code: country.iso2 || country.country
+                    }))
+                    .sort((a: Country, b: Country) => a.name.localeCompare(b.name));
+
+                setCountries(sortedCountries);
+            }
+        } catch (error) {
+            console.error('Error fetching countries:', error);
+            toast.error('Failed to load countries');
+        } finally {
+            setIsLoadingCountries(false);
+        }
+    };
+
+    // Fetch states for a specific country
+    const fetchStates = async (countryName: string) => {
+        setIsLoadingStates(true);
+        try {
+            const response = await fetch('https://countriesnow.space/api/v0.1/countries/states', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    country: countryName
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.error === false && data.data && data.data.states) {
+                const sortedStates = data.data.states
+                    .map((state: any) => ({
+                        name: state.name,
+                        state_code: state.state_code || state.name
+                    }))
+                    .sort((a: State, b: State) => a.name.localeCompare(b.name));
+
+                setStates(sortedStates);
+            }
+        } catch (error) {
+            console.error('Error fetching states:', error);
+            toast.error('Failed to load states');
+        } finally {
+            setIsLoadingStates(false);
+        }
+    };
+
+    // Fetch cities for a specific country and state
+    const fetchCities = async (countryName: string, stateName: string) => {
+        setIsLoadingCities(true);
+        try {
+            const response = await fetch('https://countriesnow.space/api/v0.1/countries/state/cities', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    country: countryName,
+                    state: stateName
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.error === false && data.data) {
+                const sortedCities = data.data
+                    .map((city: string) => ({
+                        name: city
+                    }))
+                    .sort((a: City, b: City) => a.name.localeCompare(b.name));
+
+                setCities(sortedCities);
+            }
+        } catch (error) {
+            console.error('Error fetching cities:', error);
+            toast.error('Failed to load cities');
+        } finally {
+            setIsLoadingCities(false);
+        }
+    };
 
     const checkEmailAvailability = async (email: string) => {
         if (!email || !email.includes('@')) return;
@@ -209,6 +339,10 @@ const UnifiedRegistration = () => {
             newErrors.businessPhone = 'Business phone is required';
         }
 
+        if (!formData.vendorData?.country) {
+            newErrors.country = 'Country is required';
+        }
+
         if (!formData.vendorData?.city) {
             newErrors.city = 'City is required';
         }
@@ -236,6 +370,29 @@ const UnifiedRegistration = () => {
 
             if (fieldName === 'businessEmail') {
                 checkBusinessEmailAvailability(value);
+            }
+
+            // Reset dependent fields when country or state changes
+            if (fieldName === 'country') {
+                setFormData(prev => ({
+                    ...prev,
+                    vendorData: {
+                        ...prev.vendorData!,
+                        state: '',
+                        city: ''
+                    }
+                }));
+                setStates([]);
+                setCities([]);
+            } else if (fieldName === 'state') {
+                setFormData(prev => ({
+                    ...prev,
+                    vendorData: {
+                        ...prev.vendorData!,
+                        city: ''
+                    }
+                }));
+                setCities([]);
             }
         } else {
             if (type === 'checkbox') {
@@ -348,6 +505,13 @@ const UnifiedRegistration = () => {
         }
     };
 
+    // Filter cities based on search query
+    const filteredCities = searchQuery
+        ? cities.filter(city =>
+            city.name.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        : cities;
+
     const StepProgress = () => (
         <div className="mb-8">
             <div className="flex justify-between items-center">
@@ -355,26 +519,26 @@ const UnifiedRegistration = () => {
                     <React.Fragment key={s.number}>
                         <div className="flex flex-col items-center">
                             <div className={`
-                w-10 h-10 rounded-full flex items-center justify-center border-2 font-semibold text-sm
-                ${step > s.number
+                                w-10 h-10 rounded-full flex items-center justify-center border-2 font-semibold text-sm
+                                ${step > s.number
                                     ? 'bg-gradient-to-r from-green-500 to-green-600 border-green-600 text-white'
                                     : step === s.number
                                         ? 'bg-gradient-to-r from-orange-500 to-orange-600 border-orange-600 text-white'
                                         : 'bg-white border-gray-300 text-gray-500'
                                 }
-              `}>
+                            `}>
                                 {step > s.number ? <Check className="w-5 h-5" /> : s.number}
                             </div>
                             <div className="mt-2 text-xs font-medium text-white">{s.title}</div>
                         </div>
                         {index < steps.length - 1 && (
                             <div className={`
-                flex-1 h-1 mx-4 mt-5
-                ${step > s.number + 1
+                                flex-1 h-1 mx-4 mt-5
+                                ${step > s.number + 1
                                     ? 'bg-gradient-to-r from-green-500 to-green-600'
                                     : 'bg-gray-200'
                                 }
-              `} />
+                            `} />
                         )}
                     </React.Fragment>
                 ))}
@@ -390,6 +554,13 @@ const UnifiedRegistration = () => {
             <p className="text-gray-600 mt-1">{steps[step - 1].description}</p>
         </div>
     );
+
+    const steps = [
+        { number: 1, title: 'Account Type', description: 'Choose your role' },
+        { number: 2, title: 'Personal Details', description: 'Basic information' },
+        { number: 3, title: 'Vendor Details', description: 'Business information' },
+        { number: 4, title: 'Complete', description: 'Verify your email' }
+    ];
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-purple-50 py-8 px-4">
@@ -802,64 +973,174 @@ const UnifiedRegistration = () => {
                                             )}
                                         </div>
 
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                    City *
-                                                </label>
-                                                <div className="relative">
-                                                    <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                                                    <select
-                                                        name="vendorData.city"
-                                                        value={formData.vendorData?.city || ''}
-                                                        onChange={handleInputChange}
-                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.city
-                                                            ? 'border-red-500 focus:ring-red-200'
-                                                            : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
-                                                            }`}
-                                                    >
-                                                        <option value="">Select City</option>
-                                                        {ukCities.map(city => (
-                                                            <option key={city} value={city}>{city}</option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                                {errors.city && (
-                                                    <p className="mt-1 text-sm text-red-600 flex items-center">
-                                                        <AlertCircle className="w-4 h-4 mr-1" />
-                                                        {errors.city}
-                                                    </p>
-                                                )}
-                                            </div>
+                                        {/* Location Selection */}
+                                        <div className="space-y-4">
+                                            <h3 className="text-lg font-semibold text-gray-900">
+                                                Business Location
+                                            </h3>
 
-                                            <div>
-                                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                    Service Category *
-                                                </label>
-                                                <div className="relative">
-                                                    <Globe className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                                                    <select
-                                                        name="vendorData.category"
-                                                        value={formData.vendorData?.category || ''}
-                                                        onChange={handleInputChange}
-                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.category
-                                                            ? 'border-red-500 focus:ring-red-200'
-                                                            : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
-                                                            }`}
-                                                    >
-                                                        <option value="">Select Category</option>
-                                                        {serviceCategories.map(category => (
-                                                            <option key={category} value={category}>{category}</option>
-                                                        ))}
-                                                    </select>
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                {/* Country Selector */}
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                        Country *
+                                                    </label>
+                                                    <div className="relative">
+                                                        <Globe className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                                                        {isLoadingCountries ? (
+                                                            <div className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl bg-gray-50 flex items-center">
+                                                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                                Loading countries...
+                                                            </div>
+                                                        ) : (
+                                                            <select
+                                                                name="vendorData.country"
+                                                                value={formData.vendorData?.country || ''}
+                                                                onChange={handleInputChange}
+                                                                className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.country
+                                                                    ? 'border-red-500 focus:ring-red-200'
+                                                                    : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                                    }`}
+                                                            >
+                                                                <option value="">Select Country</option>
+                                                                {countries.map((country) => (
+                                                                    <option key={country.code} value={country.name}>
+                                                                        {country.name}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        )}
+                                                    </div>
+                                                    {errors.country && (
+                                                        <p className="mt-1 text-sm text-red-600 flex items-center">
+                                                            <AlertCircle className="w-4 h-4 mr-1" />
+                                                            {errors.country}
+                                                        </p>
+                                                    )}
                                                 </div>
-                                                {errors.category && (
-                                                    <p className="mt-1 text-sm text-red-600 flex items-center">
-                                                        <AlertCircle className="w-4 h-4 mr-1" />
-                                                        {errors.category}
-                                                    </p>
-                                                )}
+
+                                                {/* State/Province Selector */}
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                        State / Province
+                                                    </label>
+                                                    <div className="relative">
+                                                        <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                                                        {isLoadingStates ? (
+                                                            <div className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl bg-gray-50 flex items-center">
+                                                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                                Loading states...
+                                                            </div>
+                                                        ) : (
+                                                            <select
+                                                                name="vendorData.state"
+                                                                value={formData.vendorData?.state || ''}
+                                                                onChange={handleInputChange}
+                                                                disabled={!formData.vendorData?.country || states.length === 0}
+                                                                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300 appearance-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                <option value="">Select State</option>
+                                                                {states.length === 0 && formData.vendorData?.country && (
+                                                                    <option value="" disabled>No states available for this country</option>
+                                                                )}
+                                                                {states.map((state) => (
+                                                                    <option key={state.state_code} value={state.name}>
+                                                                        {state.name}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                {/* City Selector */}
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                        City *
+                                                    </label>
+                                                    <div className="relative">
+                                                        <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                                                        {isLoadingCities ? (
+                                                            <div className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl bg-gray-50 flex items-center">
+                                                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                                Loading cities...
+                                                            </div>
+                                                        ) : (
+                                                            <>
+                                                                {/* Search input for cities */}
+                                                                <div className="relative mb-2">
+                                                                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                                                    <input
+                                                                        type="text"
+                                                                        placeholder="Search cities..."
+                                                                        value={searchQuery}
+                                                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                                                        className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-orange-200"
+                                                                    />
+                                                                </div>
+
+                                                                <select
+                                                                    name="vendorData.city"
+                                                                    value={formData.vendorData?.city || ''}
+                                                                    onChange={handleInputChange}
+                                                                    disabled={!formData.vendorData?.country || (!formData.vendorData?.state && states.length > 0)}
+                                                                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.city
+                                                                        ? 'border-red-500 focus:ring-red-200'
+                                                                        : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                                        }`}
+                                                                >
+                                                                    <option value="">Select City</option>
+                                                                    {filteredCities.length === 0 && (
+                                                                        <option value="" disabled>
+                                                                            {searchQuery ? 'No cities found' : 'Select country and state first'}
+                                                                        </option>
+                                                                    )}
+                                                                    {filteredCities.map((city, index) => (
+                                                                        <option key={`${city.name}-${index}`} value={city.name}>
+                                                                            {city.name}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                    {errors.city && (
+                                                        <p className="mt-1 text-sm text-red-600 flex items-center">
+                                                            <AlertCircle className="w-4 h-4 mr-1" />
+                                                            {errors.city}
+                                                        </p>
+                                                    )}
+                                                </div>
                                             </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Service Category *
+                                            </label>
+                                            <div className="relative">
+                                                <Globe className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                                                <select
+                                                    name="vendorData.category"
+                                                    value={formData.vendorData?.category || ''}
+                                                    onChange={handleInputChange}
+                                                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.category
+                                                        ? 'border-red-500 focus:ring-red-200'
+                                                        : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                        }`}
+                                                >
+                                                    <option value="">Select Category</option>
+                                                    {serviceCategories.map(category => (
+                                                        <option key={category} value={category}>{category}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            {errors.category && (
+                                                <p className="mt-1 text-sm text-red-600 flex items-center">
+                                                    <AlertCircle className="w-4 h-4 mr-1" />
+                                                    {errors.category}
+                                                </p>
+                                            )}
                                         </div>
 
                                         <div>

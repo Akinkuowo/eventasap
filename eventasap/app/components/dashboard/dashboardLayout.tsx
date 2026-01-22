@@ -34,6 +34,8 @@ interface DashboardLayoutProps {
     children: React.ReactNode;
 }
 
+const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL;
+
 const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [user, setUser] = useState<any>(null);
@@ -53,7 +55,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 return;
             }
 
-            const response = await fetch('http://localhost:5000/api/auth/me', {
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/auth/me`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -81,7 +83,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             const token = localStorage.getItem('accessToken');
             const refreshToken = localStorage.getItem('refreshToken');
 
-            await fetch('http://localhost:5000/api/auth/logout', {
+            await fetch(`${NEXT_PUBLIC_API_URL}/api/auth/logout`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
