@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import ClientBookingsList from '../components/dashboard/client-bookings-list';
 
 const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -209,35 +210,39 @@ export default function DashboardPage() {
                         </div>
 
                         <div className="space-y-4">
-                            {recentBookings.map((booking) => (
-                                <div key={booking.id} className="flex items-center justify-between p-4 border border-gray-100 rounded-xl hover:bg-gray-50 transition-colors">
-                                    <div className="flex items-center space-x-4">
-                                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${booking.status === 'Confirmed' ? 'bg-green-100' :
-                                            booking.status === 'Pending' ? 'bg-yellow-100' : 'bg-gray-100'
-                                            }`}>
-                                            {booking.status === 'Confirmed' ? (
-                                                <CheckCircle className="w-6 h-6 text-green-600" />
-                                            ) : booking.status === 'Pending' ? (
-                                                <Clock className="w-6 h-6 text-yellow-600" />
-                                            ) : (
-                                                <AlertCircle className="w-6 h-6 text-gray-600" />
-                                            )}
+                            {user.activeRole === 'CLIENT' ? (
+                                <ClientBookingsList />
+                            ) : (
+                                recentBookings.map((booking) => (
+                                    <div key={booking.id} className="flex items-center justify-between p-4 border border-gray-100 rounded-xl hover:bg-gray-50 transition-colors">
+                                        <div className="flex items-center space-x-4">
+                                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${booking.status === 'Confirmed' ? 'bg-green-100' :
+                                                booking.status === 'Pending' ? 'bg-yellow-100' : 'bg-gray-100'
+                                                }`}>
+                                                {booking.status === 'Confirmed' ? (
+                                                    <CheckCircle className="w-6 h-6 text-green-600" />
+                                                ) : booking.status === 'Pending' ? (
+                                                    <Clock className="w-6 h-6 text-yellow-600" />
+                                                ) : (
+                                                    <AlertCircle className="w-6 h-6 text-gray-600" />
+                                                )}
+                                            </div>
+                                            <div>
+                                                <h4 className="font-semibold text-gray-900">{booking.service}</h4>
+                                                <p className="text-sm text-gray-600">{booking.client} • {new Date(booking.date).toLocaleDateString()}</p>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <h4 className="font-semibold text-gray-900">{booking.service}</h4>
-                                            <p className="text-sm text-gray-600">{booking.client} • {new Date(booking.date).toLocaleDateString()}</p>
+                                        <div className="text-right">
+                                            <div className="font-bold text-gray-900">£{booking.amount}</div>
+                                            <div className={`text-xs font-medium px-2 py-1 rounded-full inline-block ${booking.status === 'Confirmed' ? 'bg-green-100 text-green-700' :
+                                                booking.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-700'
+                                                }`}>
+                                                {booking.status}
+                                            </div>
                                         </div>
                                     </div>
-                                    <div className="text-right">
-                                        <div className="font-bold text-gray-900">£{booking.amount}</div>
-                                        <div className={`text-xs font-medium px-2 py-1 rounded-full inline-block ${booking.status === 'Confirmed' ? 'bg-green-100 text-green-700' :
-                                            booking.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-gray-100 text-gray-700'
-                                            }`}>
-                                            {booking.status}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
+                                ))
+                            )}
                         </div>
                     </div>
 

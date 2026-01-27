@@ -1,4 +1,5 @@
-// prisma/schema.prisma
+// Complete Prisma Schema - Full File
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -30,18 +31,39 @@ enum BookingStatus {
 
 enum PaymentStatus {
   PENDING
+  PARTIAL
   PAID
   REFUNDED
   FAILED
+}
+
+enum ServiceRequestStatus {
+  ACTIVE
+  FULFILLED
+  CLOSED
+  EXPIRED
+}
+
+enum ServiceRequestUrgency {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ProposalStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
 }
 
 model User {
   id                  String        @id @default(cuid())
   email               String        @unique
   password            String
-  firstName           String?
-  lastName            String?
-  phoneNumber         String?
+  firstName           String
+  lastName            String
+  phoneNumber         String
   avatarUrl           String?
   emailVerified       Boolean       @default(false)
   verificationToken   String?       @unique
@@ -52,19 +74,27 @@ model User {
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
 
-  // Profiles
   vendorProfile       VendorProfile?
   clientProfile       ClientProfile?
-  
-  // Role switching
   roleSwitches        RoleSwitch[]
-  
-  // Authentication
   sessions            Session[]
   refreshTokens       RefreshToken[]
-  
-  // Notifications
   notifications       Notification[]
+  clientBookings      Booking[]     @relation("ClientBookings")
+  vendorBookings      Booking[]     @relation("VendorBookings")
+  serviceRequests     ServiceRequest[]
+  proposals           Proposal[]
+  reviewsGiven        Review[]      @relation("ReviewsGiven")
+  reviewsReceived     Review[]      @relation("ReviewsReceived")
+  payments            Payment[]
+  sentMessages        Message[]     @relation("SentMessages")
+  receivedMessages    Message[]     @relation("ReceivedMessages")
+  conversationsAsParticipant1 Conversation[] @relation("ConversationsAsParticipant1")
+  conversationsAsParticipant2 Conversation[] @relation("ConversationsAsParticipant2")
+  favoritesAsUser     Favorite[]    @relation("FavoriteUser")
+  favoritesAsVendor   Favorite[]    @relation("FavoriteVendor")
+  reportsMade         Report[]      @relation("ReportsMade")
+  reportsReceived     Report[]      @relation("ReportsReceived")
   
   @@index([email])
   @@index([activeRole])
@@ -92,6 +122,7 @@ model VendorProfile {
   businessPhone   String
   businessAddress String?
   city            String
+  state           String?
   country         String        @default("UK")
   category        String
   description     String?
@@ -103,19 +134,27 @@ model VendorProfile {
   serviceAreas    String[]
   portfolioImages String[]
   whatsappEnabled Boolean       @default(false)
+  isOnline        Boolean       @default(false)
+  responseTime    Int?          @default(24)
+  minBookingPrice Float?
+  maxBookingPrice Float?
+  availability    Json?
+  socialLinks     Json?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   servicePackages ServicePackage[]
-  bookings        Booking[]
-  reviews         Review[]
+  bookings        Booking[]     @relation("VendorProfileBookings")
+  reviews         Review[]      @relation("VendorProfileReviews")
+  proposals       Proposal[]    @relation("VendorProfileProposals")
   subscriptions   VendorSubscription[]
   
   @@index([businessName])
   @@index([city])
   @@index([category])
   @@index([status])
+  @@index([rating])
 }
 
 model ClientProfile {
@@ -124,14 +163,17 @@ model ClientProfile {
   companyName   String?
   address       String?
   city          String?
+  state         String?
   country       String?   @default("UK")
   eventTypes    String[]
+  preferences   Json?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bookings      Booking[]
-  reviews       Review[]
+  bookings      Booking[] @relation("ClientProfileBookings")
+  reviews       Review[]  @relation("ClientProfileReviews")
+  serviceRequests ServiceRequest[] @relation("ClientProfileServiceRequests")
   
   @@index([companyName])
 }
@@ -147,6 +189,8 @@ model ServicePackage {
   inclusions    String[]
   isActive      Boolean   @default(true)
   minBooking    Int?      @default(1)
+  maxBooking    Int?
+  preparationTime Int?    @default(1)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   
@@ -155,35 +199,144 @@ model ServicePackage {
   
   @@index([vendorId])
   @@index([price])
+  @@index([isActive])
 }
 
 model Booking {
-  id              String        @id @default(cuid())
-  clientId        String
-  vendorId        String
-  packageId       String
-  eventDate       DateTime
-  eventLocation   String
-  guestCount      Int?
-  specialRequests String?
-  status          BookingStatus @default(PENDING)
-  totalAmount     Float
-  depositAmount   Float?
-  commissionRate  Float         @default(0.15)
-  paymentStatus   PaymentStatus @default(PENDING)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                  String        @id @default(cuid())
+  clientId            String
+  vendorId            String
+  vendorProfileId     String?
+  clientProfileId     String?
+  serviceId           String?
+  serviceType         String
+  eventDate           DateTime
+  eventLocation       String
+  guests              Int           @default(1)
+  budget              Float
+  quotedPrice         Float?
+  message             String?
+  customRequirements  String[]
+  status              BookingStatus @default(PENDING)
+  bookingDate         DateTime      @default(now())
+  startTime           DateTime?
+  endTime             DateTime?
+  notes               String?
+  paymentStatus       PaymentStatus @default(PENDING)
+  commissionRate      Float         @default(0.15)
+  commissionAmount    Float?
+  serviceRequestId    String?
+  proposalId          String?       @unique
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
   
-  client          ClientProfile @relation(fields: [clientId], references: [id])
-  vendor          VendorProfile @relation(fields: [vendorId], references: [id])
-  package         ServicePackage @relation(fields: [packageId], references: [id])
-  review          Review?
+  client              User          @relation("ClientBookings", fields: [clientId], references: [id], onDelete: Cascade)
+  vendor              User          @relation("VendorBookings", fields: [vendorId], references: [id], onDelete: Cascade)
+  vendorProfile       VendorProfile? @relation("VendorProfileBookings", fields: [vendorProfileId], references: [id])
+  clientProfile       ClientProfile? @relation("ClientProfileBookings", fields: [clientProfileId], references: [id])
+  servicePackage      ServicePackage? @relation(fields: [serviceId], references: [id])
+  serviceRequest      ServiceRequest? @relation(fields: [serviceRequestId], references: [id])
+  proposal            Proposal?     @relation(fields: [proposalId], references: [id])
+  review              Review?
+  payments            Payment[]
   
   @@index([clientId])
   @@index([vendorId])
+  @@index([vendorProfileId])
+  @@index([clientProfileId])
   @@index([eventDate])
   @@index([status])
   @@index([paymentStatus])
+  @@index([bookingDate])
+  @@index([serviceRequestId])
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  bookingId       String
+  userId          String
+  amount          Float
+  currency        String        @default("GBP")
+  paymentMethod   String
+  stripePaymentId String?
+  status          PaymentStatus @default(PENDING)
+  description     String?
+  metadata        Json?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  booking         Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([bookingId])
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model ServiceRequest {
+  id              String                @id @default(cuid())
+  clientId        String
+  clientProfileId String?
+  serviceType     String
+  description     String
+  budgetMin       Float
+  budgetMax       Float
+  eventDate       DateTime
+  eventLocation   String
+  guests          Int                   @default(1)
+  requirements    String[]
+  urgency         ServiceRequestUrgency @default(MEDIUM)
+  status          ServiceRequestStatus  @default(ACTIVE)
+  expiryDate      DateTime?
+  isPublic        Boolean               @default(true)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  
+  client          User                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientProfile   ClientProfile?        @relation("ClientProfileServiceRequests", fields: [clientProfileId], references: [id])
+  proposals       Proposal[]
+  bookings        Booking[]
+  
+  @@index([clientId])
+  @@index([clientProfileId])
+  @@index([serviceType])
+  @@index([eventDate])
+  @@index([status])
+  @@index([urgency])
+  @@index([createdAt])
+  @@index([isPublic])
+}
+
+model Proposal {
+  id              String        @id @default(cuid())
+  vendorId        String
+  vendorProfileId String?
+  serviceRequestId String
+  price           Float
+  message         String
+  inclusions      String[]
+  exclusions      String[]
+  deliveryTime    Int?
+  revisions       Int?          @default(1)
+  status          ProposalStatus @default(PENDING)
+  isRead          Boolean       @default(false)
+  expiresAt       DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  vendor          User          @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  vendorProfile   VendorProfile? @relation("VendorProfileProposals", fields: [vendorProfileId], references: [id])
+  serviceRequest  ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  booking         Booking?
+  
+  @@index([vendorId])
+  @@index([vendorProfileId])
+  @@index([serviceRequestId])
+  @@index([status])
+  @@index([price])
+  @@index([createdAt])
+  @@index([expiresAt])
 }
 
 model Session {
@@ -222,7 +375,11 @@ model SubscriptionPlan {
   description String?
   price       Float
   currency    String    @default("GBP")
+  duration    Int       @default(30)
   features    Json
+  maxListings Int?      @default(3)
+  maxBookings Int?      @default(10)
+  priority    Int       @default(0)
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -231,6 +388,7 @@ model SubscriptionPlan {
   
   @@index([name])
   @@index([isActive])
+  @@index([price])
 }
 
 model VendorSubscription {
@@ -241,6 +399,8 @@ model VendorSubscription {
   currentPeriodStart DateTime
   currentPeriodEnd   DateTime
   stripeSubscriptionId String?
+  stripeCustomerId    String?
+  trialEndsAt     DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   
@@ -257,19 +417,29 @@ model Review {
   bookingId   String   @unique
   clientId    String
   vendorId    String
-  rating      Int
+  clientProfileId String?
+  vendorProfileId String?
+  rating      Int      @default(5)
+  title       String?
   comment     String?
+  response    String?
+  isPublic    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   
-  booking     Booking  @relation(fields: [bookingId], references: [id])
-  client      ClientProfile @relation(fields: [clientId], references: [id])
-  vendor      VendorProfile @relation(fields: [vendorId], references: [id])
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  client      User     @relation("ReviewsGiven", fields: [clientId], references: [id], onDelete: Cascade)
+  vendor      User     @relation("ReviewsReceived", fields: [vendorId], references: [id], onDelete: Cascade)
+  clientProfile ClientProfile? @relation("ClientProfileReviews", fields: [clientProfileId], references: [id])
+  vendorProfile VendorProfile? @relation("VendorProfileReviews", fields: [vendorProfileId], references: [id])
   
   @@index([vendorId])
   @@index([clientId])
+  @@index([vendorProfileId])
+  @@index([clientProfileId])
   @@index([rating])
   @@index([createdAt])
+  @@index([isPublic])
 }
 
 model Notification {
@@ -279,8 +449,11 @@ model Notification {
   title       String
   message     String
   isRead      Boolean  @default(false)
+  isSeen      Boolean  @default(false)
+  actionUrl   String?
   data        Json?
   createdAt   DateTime @default(now())
+  readAt      DateTime?
   
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
@@ -288,4 +461,104 @@ model Notification {
   @@index([isRead])
   @@index([createdAt])
   @@index([type])
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  senderId    String
+  receiverId  String
+  conversationId String?
+  bookingId   String?
+  content     String
+  isRead      Boolean  @default(false)
+  attachments String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  sender      User          @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver    User          @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation("ConversationMessages", fields: [conversationId], references: [id], onDelete: Cascade)
+  lastMessageIn Conversation? @relation("LastMessage")
+  
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([conversationId])
+  @@index([bookingId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model Conversation {
+  id             String    @id @default(cuid())
+  participant1Id String
+  participant2Id String
+  bookingId      String?
+  lastMessageId  String?   @unique
+  unreadCount    Int       @default(0)
+  lastActivityAt DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  
+  participant1 User      @relation("ConversationsAsParticipant1", fields: [participant1Id], references: [id], onDelete: Cascade)
+  participant2 User      @relation("ConversationsAsParticipant2", fields: [participant2Id], references: [id], onDelete: Cascade)
+  lastMessage  Message?  @relation("LastMessage", fields: [lastMessageId], references: [id])
+  messages     Message[] @relation("ConversationMessages")
+  
+  @@unique([participant1Id, participant2Id, bookingId])
+  @@index([participant1Id])
+  @@index([participant2Id])
+  @@index([lastActivityAt])
+}
+
+model Favorite {
+  id          String   @id @default(cuid())
+  userId      String
+  vendorId    String
+  createdAt   DateTime @default(now())
+  
+  user        User     @relation("FavoriteUser", fields: [userId], references: [id], onDelete: Cascade)
+  vendor      User     @relation("FavoriteVendor", fields: [vendorId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, vendorId])
+  @@index([userId])
+  @@index([vendorId])
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  reporterId  String
+  targetId    String
+  targetType  String
+  reason      String
+  description String
+  status      String   @default("PENDING")
+  adminNotes  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  reporter    User     @relation("ReportsMade", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetUser  User?    @relation("ReportsReceived", fields: [targetId], references: [id], onDelete: Cascade)
+  
+  @@index([reporterId])
+  @@index([targetId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model PlatformAnalytics {
+  id          String   @id @default(cuid())
+  date        DateTime @unique
+  totalUsers  Int      @default(0)
+  totalVendors Int     @default(0)
+  totalBookings Int    @default(0)
+  totalRevenue Float   @default(0)
+  newUsers    Int      @default(0)
+  newVendors  Int      @default(0)
+  completedBookings Int @default(0)
+  cancelledBookings Int @default(0)
+  avgRating   Float?   @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([date])
 }

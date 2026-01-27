@@ -184,7 +184,44 @@ const resendVerificationSchema = z.object({
   email: z.string().email()
 });
 
-// Helper functions
+// Booking schemas
+const bookingSchema = z.object({
+  vendorId: z.string(),
+  serviceId: z.string().optional(),
+  serviceType: z.string(),
+  eventDate: z.string(),
+  eventLocation: z.string(),
+  guests: z.number().min(1),
+  budget: z.number().min(0),
+  message: z.string().optional(),
+  customRequirements: z.array(z.string()).optional(),
+  bookingDate: z.string().optional()
+});
+
+const updateBookingSchema = z.object({
+  status: z.enum(['PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED']).optional(),
+  notes: z.string().optional(),
+  quotedPrice: z.number().optional(),
+  paymentStatus: z.enum(['PENDING', 'PARTIAL', 'PAID']).optional()
+});
+
+// Service Request schema
+const serviceRequestSchema = z.object({
+  serviceType: z.string(),
+  description: z.string(),
+  budgetRange: z.object({
+    min: z.number().min(0),
+    max: z.number().min(0)
+  }),
+  eventDate: z.string(),
+  eventLocation: z.string(),
+  guests: z.number().min(1),
+  requirements: z.array(z.string()).optional(),
+  urgency: z.enum(['LOW', 'MEDIUM', 'HIGH']).optional()
+});
+
+
+// In generateTokens function, update to:
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
     {
@@ -193,7 +230,7 @@ const generateTokens = (user) => {
       activeRole: user.activeRole
     },
     process.env.JWT_SECRET,
-    { expiresIn: '1h' }
+    { expiresIn: '15m' } // Shorter access token for security
   );
 
   const refreshToken = jwt.sign(
@@ -208,6 +245,7 @@ const generateTokens = (user) => {
 };
 
 // Authentication middleware
+// Update the authenticate middleware:
 const authenticate = async (request, reply) => {
   try {
     const authHeader = request.headers.authorization;
@@ -220,8 +258,28 @@ const authenticate = async (request, reply) => {
     }
 
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+    // First verify the JWT token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (jwtError) {
+      if (jwtError.name === 'TokenExpiredError') {
+        return reply.status(401).send({
+          success: false,
+          error: 'Token expired'
+        });
+      }
+      if (jwtError.name === 'JsonWebTokenError') {
+        return reply.status(401).send({
+          success: false,
+          error: 'Invalid token'
+        });
+      }
+      throw jwtError;
+    }
+
+    // Check if session exists in database
     const session = await prisma.session.findFirst({
       where: {
         token: token,
@@ -241,21 +299,12 @@ const authenticate = async (request, reply) => {
     request.session = session;
 
   } catch (error) {
-    if (error.name === 'TokenExpiredError') {
-      return reply.status(401).send({
-        success: false,
-        error: 'Token expired'
-      });
-    }
-
-    if (error.name === 'JsonWebTokenError') {
-      return reply.status(401).send({
-        success: false,
-        error: 'Invalid token'
-      });
-    }
-
-    throw error;
+    // This catch block is for database errors, not JWT errors
+    app.log.error('Authentication error:', error);
+    return reply.status(500).send({
+      success: false,
+      error: 'Internal server error'
+    });
   }
 };
 
@@ -460,7 +509,7 @@ async function start() {
           token: accessToken,
           ipAddress: request.ip,
           userAgent: request.headers['user-agent'],
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // Consistent 24 hours
         }
       });
 
@@ -610,7 +659,7 @@ async function start() {
           token: accessToken,
           ipAddress: request.ip,
           userAgent: request.headers['user-agent'],
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
         }
       });
 
@@ -926,6 +975,7 @@ async function start() {
   });
 
   // Refresh token
+  // Update the refresh token endpoint:
   app.post("/api/auth/refresh-token", async (request, reply) => {
     try {
       const { refreshToken } = request.body;
@@ -937,6 +987,18 @@ async function start() {
         });
       }
 
+      // Verify the refresh token JWT
+      let decodedRefresh;
+      try {
+        decodedRefresh = jwt.verify(refreshToken, process.env.JWT_SECRET);
+      } catch (jwtError) {
+        return reply.status(401).send({
+          success: false,
+          error: 'Invalid or expired refresh token'
+        });
+      }
+
+      // Check if refresh token exists in database
       const tokenData = await prisma.refreshToken.findUnique({
         where: { token: refreshToken },
         include: { user: true }
@@ -949,20 +1011,36 @@ async function start() {
         });
       }
 
+      // Generate new tokens
       const { accessToken: newAccessToken, refreshToken: newRefreshToken } = generateTokens(tokenData.user);
 
+      // Update refresh token in database
       await prisma.refreshToken.update({
         where: { id: tokenData.id },
         data: {
           token: newRefreshToken,
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
         }
       });
 
-      await prisma.session.updateMany({
-        where: { userId: tokenData.userId },
-        data: {
+      // Update or create session
+      await prisma.session.upsert({
+        where: {
+          userId_token: {
+            userId: tokenData.userId,
+            token: newAccessToken
+          }
+        },
+        update: {
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent']
+        },
+        create: {
+          userId: tokenData.userId,
           token: newAccessToken,
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'],
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         }
       });
@@ -971,7 +1049,7 @@ async function start() {
         success: true,
         data: {
           accessToken: newAccessToken,
-          refreshToken: newRefresh
+          refreshToken: newRefreshToken
         }
       });
 
@@ -980,6 +1058,25 @@ async function start() {
       return reply.status(500).send({
         success: false,
         error: 'Internal server error'
+      });
+    }
+  });
+
+  // Add this endpoint to validate tokens without expiring them
+  app.get("/api/auth/validate-token", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      return reply.send({
+        success: true,
+        message: 'Token is valid',
+        data: {
+          user: request.user,
+          expiresAt: request.session.expiresAt
+        }
+      });
+    } catch (error) {
+      return reply.status(401).send({
+        success: false,
+        error: 'Invalid token'
       });
     }
   });
@@ -1021,6 +1118,841 @@ async function start() {
 
     } catch (error) {
       app.log.error('Check business email error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Create a booking (Client creates booking with vendor)
+  app.post("/api/bookings", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const data = bookingSchema.parse(request.body);
+
+      // Check if user is a client
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { clientProfile: true }
+      });
+
+      if (!user || !user.clientProfile) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only clients can create bookings'
+        });
+      }
+
+      // Check if vendor exists
+      const vendor = await prisma.user.findUnique({
+        where: { id: data.vendorId },
+        include: { vendorProfile: true }
+      });
+
+      if (!vendor || !vendor.vendorProfile) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Vendor not found'
+        });
+      }
+
+      const booking = await prisma.booking.create({
+        data: {
+          clientId: userId,
+          vendorId: data.vendorId,
+          serviceId: data.serviceId,
+          serviceType: data.serviceType,
+          eventDate: new Date(data.eventDate),
+          eventLocation: data.eventLocation,
+          guests: data.guests,
+          budget: data.budget,
+          message: data.message,
+          customRequirements: data.customRequirements || [],
+          status: 'PENDING',
+          bookingDate: new Date(data.bookingDate || Date.now())
+        },
+        include: {
+          client: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneNumber: true
+            }
+          },
+          vendor: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneNumber: true,
+              vendorProfile: true
+            }
+          }
+        }
+      });
+
+      // Create notification for vendor
+      await prisma.notification.create({
+        data: {
+          userId: data.vendorId,
+          type: 'NEW_BOOKING',
+          title: 'New Booking Request',
+          message: `${user.firstName} ${user.lastName} has requested a booking for ${data.serviceType}`,
+          data: { bookingId: booking.id }
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Booking request sent successfully',
+        data: { booking }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors.map(err => ({
+            field: err.path.join('.'),
+            message: err.message
+          }))
+        });
+      }
+      app.log.error('Create booking error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get user bookings (both client and vendor)
+  app.get("/api/bookings", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { role, status, page = 1, limit = 10 } = request.query;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      let whereClause = {};
+      if (user.activeRole === 'CLIENT') {
+        whereClause.clientId = userId;
+      } else if (user.activeRole === 'VENDOR') {
+        whereClause.vendorId = userId;
+      }
+
+      if (status) {
+        whereClause.status = status;
+      }
+
+      const skip = (page - 1) * limit;
+
+      const [bookings, total] = await Promise.all([
+        prisma.booking.findMany({
+          where: whereClause,
+          skip,
+          take: parseInt(limit),
+          include: {
+            client: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneNumber: true
+              }
+            },
+            vendor: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneNumber: true,
+                vendorProfile: true
+              }
+            },
+            payments: {
+              orderBy: { createdAt: 'desc' },
+              take: 1
+            }
+          },
+          orderBy: { bookingDate: 'desc' }
+        }),
+        prisma.booking.count({ where: whereClause })
+      ]);
+
+      // Calculate stats
+      const stats = {
+        total: total,
+        pending: await prisma.booking.count({ where: { ...whereClause, status: 'PENDING' } }),
+        confirmed: await prisma.booking.count({ where: { ...whereClause, status: 'CONFIRMED' } }),
+        cancelled: await prisma.booking.count({ where: { ...whereClause, status: 'CANCELLED' } }),
+        completed: await prisma.booking.count({ where: { ...whereClause, status: 'COMPLETED' } })
+      };
+
+      return reply.send({
+        success: true,
+        data: {
+          bookings,
+          stats,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get bookings error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get single booking
+  app.get("/api/bookings/:id", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+
+      const booking = await prisma.booking.findUnique({
+        where: { id },
+        include: {
+          client: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneNumber: true,
+              clientProfile: true
+            }
+          },
+          vendor: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneNumber: true,
+              vendorProfile: true
+            }
+          },
+          payments: {
+            orderBy: { createdAt: 'desc' }
+          },
+          reviews: true
+        }
+      });
+
+      if (!booking) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Booking not found'
+        });
+      }
+
+      // Check authorization
+      if (booking.clientId !== userId && booking.vendorId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Not authorized to view this booking'
+        });
+      }
+
+      return reply.send({
+        success: true,
+        data: { booking }
+      });
+
+    } catch (error) {
+      app.log.error('Get booking error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Update booking (vendor updates status, price, etc.)
+  app.put("/api/bookings/:id", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+      const data = updateBookingSchema.parse(request.body);
+
+      const booking = await prisma.booking.findUnique({
+        where: { id }
+      });
+
+      if (!booking) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Booking not found'
+        });
+      }
+
+      // Only vendor can update booking
+      if (booking.vendorId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only vendor can update booking'
+        });
+      }
+
+      const updatedBooking = await prisma.booking.update({
+        where: { id },
+        data: {
+          status: data.status || booking.status,
+          notes: data.notes || booking.notes,
+          quotedPrice: data.quotedPrice || booking.quotedPrice,
+          paymentStatus: data.paymentStatus || booking.paymentStatus,
+          updatedAt: new Date()
+        }
+      });
+
+      // Create notification for client
+      if (data.status && data.status !== booking.status) {
+        await prisma.notification.create({
+          data: {
+            userId: booking.clientId,
+            type: 'BOOKING_STATUS_UPDATE',
+            title: 'Booking Status Updated',
+            message: `Your booking status has been updated to ${data.status}`,
+            data: { bookingId: booking.id, status: data.status }
+          }
+        });
+      }
+
+      return reply.send({
+        success: true,
+        message: 'Booking updated successfully',
+        data: { booking: updatedBooking }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors.map(err => ({
+            field: err.path.join('.'),
+            message: err.message
+          }))
+        });
+      }
+      app.log.error('Update booking error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Payments API
+
+  // Process a payment (Mock flow)
+  app.post("/api/payments", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { bookingId, amount, paymentMethod, description } = request.body;
+
+      if (!bookingId || !amount) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Booking ID and amount are required'
+        });
+      }
+
+      const booking = await prisma.booking.findUnique({
+        where: { id: bookingId }
+      });
+
+      if (!booking) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Booking not found'
+        });
+      }
+
+      if (booking.clientId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Not authorized to pay for this booking'
+        });
+      }
+
+      // Create payment record
+      const payment = await prisma.$transaction(async (tx) => {
+        const p = await tx.payment.create({
+          data: {
+            bookingId,
+            userId,
+            amount: parseFloat(amount),
+            paymentMethod: paymentMethod || 'CARD',
+            status: 'PAID',
+            description: description || `Payment for booking ${bookingId}`
+          }
+        });
+
+        // Update booking status
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: {
+            paymentStatus: 'PAID',
+            status: 'CONFIRMED'
+          }
+        });
+
+        return p;
+      });
+
+      // Create notification for vendor
+      await prisma.notification.create({
+        data: {
+          userId: booking.vendorId,
+          type: 'PAYMENT_RECEIVED',
+          title: 'Payment Received',
+          message: `Payment of £${amount} received for booking ${bookingId}`,
+          data: { bookingId, paymentId: payment.id }
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Payment processed successfully',
+        data: { payment }
+      });
+
+    } catch (error) {
+      app.log.error('Process payment error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get payment history
+  app.get("/api/payments", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { page = 1, limit = 10 } = request.query;
+
+      const skip = (page - 1) * limit;
+
+      const [payments, total] = await Promise.all([
+        prisma.payment.findMany({
+          where: { userId },
+          skip,
+          take: parseInt(limit),
+          include: {
+            booking: {
+              select: {
+                id: true,
+                serviceType: true,
+                vendor: {
+                  select: {
+                    firstName: true,
+                    lastName: true,
+                    vendorProfile: {
+                      select: {
+                        businessName: true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        }),
+        prisma.payment.count({ where: { userId } })
+      ]);
+
+      return reply.send({
+        success: true,
+        data: {
+          payments,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get payments error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get all approved vendors
+  app.get("/api/vendors", async (request, reply) => {
+    try {
+      const { category, city, search, page = 1, limit = 12, onlyBooked = 'false' } = request.query;
+
+      // Check authentication if onlyBooked is requested
+      let currentUserId = null;
+      if (onlyBooked === 'true') {
+        const authHeader = request.headers.authorization;
+        if (!authHeader) {
+          return reply.status(401).send({ success: false, error: 'Authentication required for My Vendors' });
+        }
+        const token = authHeader.split(' ')[1];
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          currentUserId = decoded.userId;
+        } catch (err) {
+          return reply.status(401).send({ success: false, error: 'Invalid token' });
+        }
+      }
+
+      let whereClause = {
+        status: 'APPROVED'
+      };
+
+      if (category) {
+        whereClause.category = category;
+      }
+
+      if (city) {
+        whereClause.city = {
+          contains: city,
+          mode: 'insensitive'
+        };
+      }
+
+      if (search) {
+        whereClause.OR = [
+          { businessName: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } }
+        ];
+      }
+
+      // Filter by vendors booked by the current user
+      if (onlyBooked === 'true' && currentUserId) {
+        whereClause.bookings = {
+          some: {
+            clientId: currentUserId
+          }
+        };
+      }
+
+      const skip = (page - 1) * limit;
+
+      const [vendors, total] = await Promise.all([
+        prisma.vendorProfile.findMany({
+          where: whereClause,
+          skip,
+          take: parseInt(limit),
+          select: {
+            id: true,
+            businessName: true,
+            category: true,
+            city: true,
+            country: true,
+            description: true,
+            rating: true,
+            totalReviews: true,
+            portfolioImages: true,
+            minBookingPrice: true,
+            responseTime: true,
+            isVerified: true,
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+                avatarUrl: true
+              }
+            }
+          },
+          orderBy: { rating: 'desc' }
+        }),
+        prisma.vendorProfile.count({ where: whereClause })
+      ]);
+
+      return reply.send({
+        success: true,
+        data: {
+          vendors,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get vendors error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Service Requests (Client posts service needs)
+
+  // Create service request
+  app.post("/api/service-requests", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const data = serviceRequestSchema.parse(request.body);
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { clientProfile: true }
+      });
+
+      if (!user || !user.clientProfile) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only clients can create service requests'
+        });
+      }
+
+      const serviceRequest = await prisma.serviceRequest.create({
+        data: {
+          clientId: userId,
+          serviceType: data.serviceType,
+          description: data.description,
+          budgetMin: data.budgetRange.min,
+          budgetMax: data.budgetRange.max,
+          eventDate: new Date(data.eventDate),
+          eventLocation: data.eventLocation,
+          guests: data.guests,
+          requirements: data.requirements || [],
+          urgency: data.urgency || 'MEDIUM',
+          status: 'ACTIVE'
+        },
+        include: {
+          client: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneNumber: true
+            }
+          }
+        }
+      });
+
+      // Find relevant vendors and notify them
+      const relevantVendors = await prisma.user.findMany({
+        where: {
+          activeRole: 'VENDOR',
+          vendorProfile: {
+            category: data.serviceType
+          }
+        },
+        take: 10 // Limit notifications
+      });
+
+      for (const vendor of relevantVendors) {
+        await prisma.notification.create({
+          data: {
+            userId: vendor.id,
+            type: 'NEW_SERVICE_REQUEST',
+            title: 'New Service Request',
+            message: `${user.firstName} needs ${data.serviceType} services`,
+            data: {
+              serviceRequestId: serviceRequest.id,
+              serviceType: data.serviceType,
+              budgetMin: data.budgetRange.min,
+              budgetMax: data.budgetRange.max
+            }
+          }
+        });
+      }
+
+      return reply.send({
+        success: true,
+        message: 'Service request posted successfully',
+        data: { serviceRequest }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors.map(err => ({
+            field: err.path.join('.'),
+            message: err.message
+          }))
+        });
+      }
+      app.log.error('Create service request error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get service requests (for vendors)
+  app.get("/api/service-requests", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { serviceType, minBudget, maxBudget, page = 1, limit = 10 } = request.query;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (user.activeRole !== 'VENDOR') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only vendors can view service requests'
+        });
+      }
+
+      const vendor = await prisma.vendorProfile.findUnique({
+        where: { userId }
+      });
+
+      let whereClause = {
+        status: 'ACTIVE'
+      };
+
+      if (serviceType) {
+        whereClause.serviceType = serviceType;
+      }
+
+      if (minBudget) {
+        whereClause.budgetMin = { gte: parseInt(minBudget) };
+      }
+
+      if (maxBudget) {
+        whereClause.budgetMax = { lte: parseInt(maxBudget) };
+      }
+
+      const skip = (page - 1) * limit;
+
+      const [serviceRequests, total] = await Promise.all([
+        prisma.serviceRequest.findMany({
+          where: whereClause,
+          skip,
+          take: parseInt(limit),
+          include: {
+            client: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneNumber: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        }),
+        prisma.serviceRequest.count({ where: whereClause })
+      ]);
+
+      return reply.send({
+        success: true,
+        data: {
+          serviceRequests,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get service requests error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get client's service requests
+  app.get("/api/my-service-requests", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { status, page = 1, limit = 10 } = request.query;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (user.activeRole !== 'CLIENT') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only clients can view their service requests'
+        });
+      }
+
+      let whereClause = { clientId: userId };
+      if (status) {
+        whereClause.status = status;
+      }
+
+      const skip = (page - 1) * limit;
+
+      const [serviceRequests, total] = await Promise.all([
+        prisma.serviceRequest.findMany({
+          where: whereClause,
+          skip,
+          take: parseInt(limit),
+          include: {
+            client: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phoneNumber: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        }),
+        prisma.serviceRequest.count({ where: whereClause })
+      ]);
+
+      return reply.send({
+        success: true,
+        data: {
+          serviceRequests,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get my service requests error:', error);
       return reply.status(500).send({
         success: false,
         error: 'Internal server error'

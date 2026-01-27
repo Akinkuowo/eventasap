@@ -123,6 +123,12 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             roles: ['VENDOR']
         },
         {
+            name: 'Services',
+            href: '/dashboard/services',
+            icon: Package,
+            roles: ['CLIENT']
+        },
+        {
             name: 'Clients',
             href: '/dashboard/clients',
             icon: Users,
