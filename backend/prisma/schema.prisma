@@ -188,6 +188,12 @@ model ServicePackage {
   duration      Int
   inclusions    String[]
   isActive      Boolean   @default(true)
+  aboutVendor   String?
+  mainImage     String?
+  gallery       String[]
+  location      String?
+  state         String?
+  availability  Json?
   minBooking    Int?      @default(1)
   maxBooking    Int?
   preparationTime Int?    @default(1)

@@ -9,7 +9,7 @@ import {
     Trash2,
     ToggleLeft,
     ToggleRight,
-    BritishPound
+    PoundSterling
 } from 'lucide-react';
 
 interface ServicePackage {
@@ -57,7 +57,7 @@ const PackageCard: React.FC<PackageCardProps> = ({ pkg, onEdit, onDelete, onTogg
                     </div>
                     <div className="text-right">
                         <p className="text-xl font-bold text-gray-900 flex items-center justify-end">
-                            <BritishPound className="w-4 h-4 mr-0.5" />
+                            <PoundSterling className="w-4 h-4 mr-0.5" />
                             {pkg.price.toLocaleString()}
                         </p>
                         <p className="text-xs text-gray-500">{pkg.currency}</p>
@@ -105,8 +105,8 @@ const PackageCard: React.FC<PackageCardProps> = ({ pkg, onEdit, onDelete, onTogg
                     <button
                         onClick={() => onToggleStatus(pkg)}
                         className={`flex items-center px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${pkg.isActive
-                                ? 'text-gray-600 hover:bg-gray-100'
-                                : 'text-orange-600 hover:bg-orange-50'
+                            ? 'text-gray-600 hover:bg-gray-100'
+                            : 'text-orange-600 hover:bg-orange-50'
                             }`}
                     >
                         {pkg.isActive ? (
