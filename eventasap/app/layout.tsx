@@ -6,6 +6,8 @@ import "./globals.css";
 import { Toaster } from 'sonner';
 
 
+import { ThemeProvider } from "./components/theme-provider";
+
 const dmSans = DM_Sans({
   variable: "--font-dm-sans",
   subsets: ["latin"],
@@ -22,22 +24,23 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${dmSans.variable} antialiased`}
       >
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            style: {
-              background: 'white',
-              color: '#333',
-              border: '1px solid #e5e7eb',
-            },
-          }}
-        />
-        {children}
-
+        <ThemeProvider>
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              style: {
+                background: 'white',
+                color: '#333',
+                border: '1px solid #e5e7eb',
+              },
+            }}
+          />
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

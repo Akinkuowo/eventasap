@@ -17,7 +17,8 @@ import {
     MapPin,
     Building,
     AlertCircle,
-    Loader2
+    Loader2,
+    Sparkles
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -25,6 +26,9 @@ import { toast } from 'sonner';
 import ProfileSettings from './settings/profile-settings';
 import VendorProfileSettings from './settings/vendor-profile-settings';
 import SecuritySettings from './settings/security-settings';
+import NotificationSettings from './settings/notification-settings';
+import BillingSettings from './settings/billing-settings';
+import PreferenceSettings from './settings/preference-settings';
 import VendorSetupForm from './settings/vendor-setup-form';
 
 const NEXT_AUTH_PATH = process.env.NEXT_PUBLIC_API_URL
@@ -424,6 +428,15 @@ export default function SettingsPage() {
                         )}
                         {activeTab === 'security' && (
                             <SecuritySettings />
+                        )}
+                        {activeTab === 'notifications' && (
+                            <NotificationSettings />
+                        )}
+                        {activeTab === 'billing' && (
+                            <BillingSettings />
+                        )}
+                        {activeTab === 'preferences' && (
+                            <PreferenceSettings />
                         )}
                     </div>
                 </div>
