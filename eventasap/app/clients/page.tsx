@@ -3,6 +3,7 @@
 import React from 'react';
 import Header from '@/components/header';
 import ForClient from '@/app/components/dashboard/for-client';
+import Footer from '@/components/footer';
 
 export default function ClientsDiscoveryPage() {
     return (
@@ -11,6 +12,7 @@ export default function ClientsDiscoveryPage() {
             <div className="container mx-auto px-4 py-8">
                 <ForClient />
             </div>
+            <Footer />
         </main>
     );
 }

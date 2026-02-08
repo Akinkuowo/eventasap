@@ -1,15 +1,49 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Upload, FileText, Check, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface VendorProfileSettingsProps {
     user: any;
+    onUpdate: (data: any) => Promise<void>;
+    isSaving: boolean;
 }
 
-export default function VendorProfileSettings({ user }: VendorProfileSettingsProps) {
+export default function VendorProfileSettings({ user, onUpdate, isSaving }: VendorProfileSettingsProps) {
+    const [proofFile, setProofFile] = useState<string | null>(null);
+    const [fileName, setFileName] = useState<string>('');
+
     if (!user?.vendorProfile) return null;
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            if (file.size > 5 * 1024 * 1024) { // 5MB limit
+                toast.error("File size should be less than 5MB");
+                return;
+            }
+
+            setFileName(file.name);
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                setProofFile(reader.result as string);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const handleUploadProof = async () => {
+        if (!proofFile) return;
+
+        await onUpdate({
+            businessProof: proofFile
+        });
+
+        setProofFile(null);
+        setFileName('');
+    };
 
     return (
         <motion.div
@@ -110,6 +144,73 @@ export default function VendorProfileSettings({ user }: VendorProfileSettingsPro
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-gray-50"
                     disabled
                 />
+            </div>
+
+            {/* Proof of Business Section */}
+            <div className="border-t pt-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Proof of Business</h3>
+                <div className="bg-gray-50 p-6 rounded-xl border border-gray-200">
+                    <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+                        <div className="flex-1">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Upload Business Document
+                            </label>
+                            <p className="text-sm text-gray-500 mb-4">
+                                Please upload a valid business license, registration document, or poof of address to verify your business.
+                                <span className="text-orange-600 font-medium ml-1">
+                                    Note: Uploading a new document will reset your verification status to PENDING.
+                                </span>
+                            </p>
+
+                            <div className="flex items-center gap-4">
+                                <label className="cursor-pointer inline-flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
+                                    <Upload className="w-4 h-4 mr-2" />
+                                    Choose File
+                                    <input
+                                        type="file"
+                                        className="hidden"
+                                        accept=".pdf,.jpg,.jpeg,.png"
+                                        onChange={handleFileChange}
+                                        disabled={isSaving}
+                                    />
+                                </label>
+                                {fileName && (
+                                    <span className="text-sm text-gray-600 flex items-center">
+                                        <FileText className="w-4 h-4 mr-1" />
+                                        {fileName}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
+                        {proofFile && (
+                            <button
+                                onClick={handleUploadProof}
+                                disabled={isSaving}
+                                className="px-6 py-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white font-medium rounded-lg shadow-md hover:shadow-lg transition-all disabled:opacity-50 flex items-center"
+                            >
+                                {isSaving ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                        Uploading...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Check className="w-4 h-4 mr-2" />
+                                        Submit Document
+                                    </>
+                                )}
+                            </button>
+                        )}
+                    </div>
+
+                    {user.vendorProfile.businessProof && !proofFile && (
+                        <div className="mt-4 flex items-center text-green-600 bg-green-50 px-4 py-2 rounded-lg inline-flex">
+                            <Check className="w-4 h-4 mr-2" />
+                            <span className="text-sm font-medium">Proof of Business document on file</span>
+                        </div>
+                    )}
+                </div>
             </div>
 
             <div className="p-4 bg-gradient-to-r from-orange-50 to-purple-50 rounded-xl border border-orange-200">

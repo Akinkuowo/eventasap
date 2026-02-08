@@ -140,6 +140,8 @@ model VendorProfile {
   maxBookingPrice Float?
   availability    Json?
   socialLinks     Json?
+  businessProof   String?
+  billingDetails  Json?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   

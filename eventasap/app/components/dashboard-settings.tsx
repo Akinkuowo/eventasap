@@ -280,6 +280,35 @@ export default function SettingsPage() {
         }
     };
 
+    const handleVendorProfileUpdate = async (updatedData: any) => {
+        setIsSaving(true);
+        try {
+            const token = localStorage.getItem('accessToken');
+            const response = await fetch(`${NEXT_AUTH_PATH}/api/vendor/profile`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(updatedData)
+            });
+            const data = await response.json();
+            if (response.ok) {
+                toast.success('Vendor profile updated successfully');
+                setUser((prev: any) => ({
+                    ...prev,
+                    vendorProfile: data.data.vendorProfile
+                }));
+            } else {
+                toast.error(data.error || 'Failed to update vendor profile');
+            }
+        } catch (error) {
+            toast.error('Network error. Please try again.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     const tabs = [
         { id: 'profile', label: 'Profile', icon: User },
         { id: 'vendor', label: 'Vendor Profile', icon: Briefcase },
@@ -424,7 +453,11 @@ export default function SettingsPage() {
                             />
                         )}
                         {activeTab === 'vendor' && (
-                            <VendorProfileSettings user={user} />
+                            <VendorProfileSettings
+                                user={user}
+                                onUpdate={handleVendorProfileUpdate}
+                                isSaving={isSaving}
+                            />
                         )}
                         {activeTab === 'security' && (
                             <SecuritySettings />

@@ -7,12 +7,9 @@ import {
     Twitter,
     Instagram,
     Linkedin,
-    Mail,
-    Phone,
-    ChevronDown,
-    Apple,
-    Play
+    ChevronDown
 } from 'lucide-react';
+import Image from 'next/image';
 
 const Footer = () => {
     return (
@@ -44,7 +41,7 @@ const Footer = () => {
                             <li><Link href="/about" className="text-gray-400 hover:text-white transition-colors">About Us</Link></li>
                             <li><Link href="/signup?role=vendor" className="text-gray-400 hover:text-white transition-colors">Become a Seller</Link></li>
                             <li><Link href="/pricing" className="text-gray-400 hover:text-white transition-colors">Pricing</Link></li>
-                            <li><Link href="/services" className="text-gray-400 hover:text-white transition-colors">Services</Link></li>
+                            <li><Link href="/vendors" className="text-gray-400 hover:text-white transition-colors">Services</Link></li>
                             <li><Link href="/terms" className="text-gray-400 hover:text-white transition-colors">Terms of Service</Link></li>
                         </ul>
                     </div>
@@ -77,8 +74,9 @@ const Footer = () => {
                     <div className="lg:col-span-5 space-y-12 lg:pl-12">
                         <div className="space-y-4">
                             <div className="flex items-center space-x-2">
-                                <div className="w-10 h-10 bg-orange-600 rounded-lg flex items-center justify-center font-bold text-xl italic">ea</div>
-                                <span className="text-2xl font-black tracking-tighter uppercase italic">Event ASAP</span>
+                                <div className="flex flex-col">
+                                    <Image src="/images/events-asap-logo.png" alt="EventASAP" width={150} height={150} className='w-36 h-36' />
+                                </div>
                             </div>
                         </div>
 
@@ -89,27 +87,7 @@ const Footer = () => {
                             </div>
                             <div className="space-y-2">
                                 <p className="text-gray-400 font-bold text-sm uppercase tracking-wider">Need live support?</p>
-                                <p className="text-xl font-bold">hi@eventasap.com</p>
-                            </div>
-                        </div>
-
-                        <div className="space-y-6">
-                            <p className="font-bold">Apps</p>
-                            <div className="flex flex-wrap gap-4">
-                                <Link href="#" className="flex items-center space-x-3 bg-white/5 hover:bg-white/10 border border-white/10 px-6 py-3 rounded-2xl transition-all group">
-                                    <Apple className="w-6 h-6" />
-                                    <div className="text-left">
-                                        <p className="text-[10px] uppercase tracking-wider text-gray-500">Download on the</p>
-                                        <p className="font-bold text-sm">Apple Store</p>
-                                    </div>
-                                </Link>
-                                <Link href="#" className="flex items-center space-x-3 bg-white/5 hover:bg-white/10 border border-white/10 px-6 py-3 rounded-2xl transition-all group">
-                                    <Play className="w-6 h-6 fill-current" />
-                                    <div className="text-left">
-                                        <p className="text-[10px] uppercase tracking-wider text-gray-500">Get it on</p>
-                                        <p className="font-bold text-sm">Google Play</p>
-                                    </div>
-                                </Link>
+                                <p className="text-xl font-bold">info@eventasap.com</p>
                             </div>
                         </div>
 
@@ -128,7 +106,7 @@ const Footer = () => {
                 {/* Bottom Bar */}
                 <div className="pt-10 flex flex-col md:flex-row items-center justify-between gap-6">
                     <p className="text-gray-500 text-sm font-medium">
-                        © Eventasap. 2025. All rights reserved.
+                        © Eventasap. 2026. All rights reserved.
                     </p>
                     <button className="flex items-center space-x-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm font-bold hover:bg-white/10 transition-all">
                         <span>English</span>

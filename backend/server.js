@@ -13,6 +13,7 @@ const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 
 const app = Fastify({
+  bodyLimit: 50 * 1024 * 1024, // 50MB limit for base64 images and gallery uploads
   logger: {
     transport: {
       target: 'pino-pretty',
@@ -22,6 +23,7 @@ const app = Fastify({
     }
   }
 });
+
 
 const prisma = new PrismaClient();
 
@@ -220,6 +222,73 @@ const serviceRequestSchema = z.object({
   urgency: z.enum(['LOW', 'MEDIUM', 'HIGH']).optional()
 });
 
+// Service Package schema
+const servicePackageSchema = z.object({
+  title: z.string().min(2),
+  description: z.string(),
+  price: z.number().min(0),
+  currency: z.string().default('GBP'),
+  duration: z.number().min(1),
+  inclusions: z.array(z.string()),
+  isActive: z.boolean().default(true),
+  aboutVendor: z.string().optional(),
+  mainImage: z.string().optional(),
+  gallery: z.array(z.string()).optional(),
+  location: z.string().optional(),
+  state: z.string().optional(),
+  availability: z.any().optional(),
+  minBooking: z.number().optional(),
+  maxBooking: z.number().optional(),
+  preparationTime: z.number().optional()
+});
+
+
+
+const profileUpdateSchema = z.object({
+  firstName: z.string().min(2).optional(),
+  lastName: z.string().min(2).optional(),
+  phoneNumber: z.string().optional()
+});
+
+const vendorProfileUpdateSchema = z.object({
+  businessName: z.string().min(2).optional(),
+  businessEmail: z.string().email().optional(),
+  businessPhone: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  country: z.string().optional(),
+  category: z.string().optional(),
+  description: z.string().optional(),
+  website: z.string().optional().nullable(),
+  serviceAreas: z.array(z.string()).optional(),
+  whatsappEnabled: z.boolean().optional(),
+  businessProof: z.string().optional()
+});
+
+const billingUpdateSchema = z.object({
+  accountName: z.string(),
+  bankName: z.string(),
+  accountNumber: z.string(),
+  sortCode: z.string().optional(),
+  iban: z.string().optional(),
+  swiftCode: z.string().optional()
+});
+
+const preferenceUpdateSchema = z.object({
+  language: z.string().optional(),
+  currency: z.string().optional(),
+  theme: z.string().optional(),
+  timezone: z.string().optional(),
+  notifications: z.object({
+    email: z.boolean().optional(),
+    sms: z.boolean().optional(),
+    push: z.boolean().optional(),
+    bookingUpdates: z.boolean().optional(),
+    newProposals: z.boolean().optional(),
+    paymentReminders: z.boolean().optional(),
+    marketing: z.boolean().optional()
+  }).optional()
+});
 
 // In generateTokens function, update to:
 const generateTokens = (user) => {
@@ -267,16 +336,14 @@ const authenticate = async (request, reply) => {
       if (jwtError.name === 'TokenExpiredError') {
         return reply.status(401).send({
           success: false,
-          error: 'Token expired'
+          error: 'Token expired',
+          code: 'TOKEN_EXPIRED'
         });
       }
-      if (jwtError.name === 'JsonWebTokenError') {
-        return reply.status(401).send({
-          success: false,
-          error: 'Invalid token'
-        });
-      }
-      throw jwtError;
+      return reply.status(401).send({
+        success: false,
+        error: 'Invalid token'
+      });
     }
 
     // Check if session exists in database
@@ -299,7 +366,6 @@ const authenticate = async (request, reply) => {
     request.session = session;
 
   } catch (error) {
-    // This catch block is for database errors, not JWT errors
     app.log.error('Authentication error:', error);
     return reply.status(500).send({
       success: false,
@@ -307,6 +373,36 @@ const authenticate = async (request, reply) => {
     });
   }
 };
+
+const optionalAuthenticate = async (request, reply) => {
+  try {
+    const authHeader = request.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+        const session = await prisma.session.findFirst({
+          where: {
+            token: token,
+            userId: decoded.userId,
+            expiresAt: { gt: new Date() }
+          }
+        });
+
+        if (session) {
+          request.user = decoded;
+          request.session = session;
+        }
+      } catch (err) {
+        // Silently ignore invalid tokens for optional auth
+      }
+    }
+  } catch (error) {
+    // Silently ignore errors
+  }
+};
+
 
 async function start() {
   // Register plugins
@@ -938,6 +1034,157 @@ async function start() {
         success: false,
         error: 'Internal server error'
       });
+    }
+  });
+
+  // Update user profile
+  app.put("/api/user/update-profile", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const data = profileUpdateSchema.parse(request.body);
+
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: {
+          firstName: data.firstName,
+          lastName: data.lastName,
+          phoneNumber: data.phoneNumber
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Profile updated successfully',
+        data: { user: updatedUser }
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      app.log.error('Update profile error:', error);
+      return reply.status(500).send({ success: false, error: 'Internal server error' });
+    }
+  });
+
+  // Update billing/payout details
+  app.put("/api/user/update-billing", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const data = billingUpdateSchema.parse(request.body);
+
+      const userProfile = await prisma.vendorProfile.findUnique({
+        where: { userId }
+      });
+
+      if (!userProfile) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Vendor profile not found'
+        });
+      }
+
+      await prisma.vendorProfile.update({
+        where: { id: userProfile.id },
+        data: { billingDetails: data }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Billing details updated successfully'
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      app.log.error('Update billing error:', error);
+      return reply.status(500).send({ success: false, error: 'Internal server error' });
+    }
+  });
+
+  // Update vendor profile details (including business proof)
+  app.put("/api/vendor/profile", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const data = vendorProfileUpdateSchema.parse(request.body);
+
+      const userProfile = await prisma.vendorProfile.findUnique({
+        where: { userId }
+      });
+
+      if (!userProfile) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Vendor profile not found'
+        });
+      }
+
+      // Check if businessProof is being updated
+      let updateData = {
+        ...data,
+        updatedAt: new Date()
+      };
+
+      if (data.businessProof) {
+        updateData.status = 'PENDING';
+        updateData.isVerified = false;
+      }
+
+      const updatedProfile = await prisma.vendorProfile.update({
+        where: { id: userProfile.id },
+        data: updateData
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Vendor profile updated successfully',
+        data: { vendorProfile: updatedProfile }
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      app.log.error('Update vendor profile error:', error);
+      return reply.status(500).send({ success: false, error: 'Internal server error' });
+    }
+  });
+
+  // Update user preferences
+  app.put("/api/user/update-preferences", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const data = preferenceUpdateSchema.parse(request.body);
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: { preferences: data }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Preferences updated successfully'
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      app.log.error('Update preferences error:', error);
+      return reply.status(500).send({ success: false, error: 'Internal server error' });
     }
   });
 
@@ -1604,6 +1851,324 @@ async function start() {
     }
   });
 
+  // Service Package Routes (Vendor Management)
+
+  // Create a new service package
+  app.post("/api/vendor/packages", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const data = servicePackageSchema.parse(request.body);
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { vendorProfile: true }
+      });
+
+      if (!user || user.activeRole !== 'VENDOR' || !user.vendorProfile) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only vendors can create service packages'
+        });
+      }
+
+      if (!user.vendorProfile.businessProof) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Proof of business is required to create service packages. Please update your vendor profile.'
+        });
+      }
+
+      const pkg = await prisma.servicePackage.create({
+        data: {
+          vendorId: user.vendorProfile.id,
+          title: data.title,
+          description: data.description,
+          price: data.price,
+          currency: data.currency,
+          duration: data.duration,
+          inclusions: data.inclusions,
+          isActive: data.isActive,
+          aboutVendor: data.aboutVendor,
+          mainImage: data.mainImage,
+          gallery: data.gallery || [],
+          location: data.location,
+          state: data.state,
+          availability: data.availability,
+          minBooking: data.minBooking,
+          maxBooking: data.maxBooking,
+          preparationTime: data.preparationTime
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Service package created successfully',
+        data: { package: pkg }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors.map(err => ({
+            field: err.path.join('.'),
+            message: err.message
+          }))
+        });
+      }
+      app.log.error('Create package error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error',
+        details: error.message
+      });
+    }
+  });
+
+
+  // Update a service package
+  app.put("/api/vendor/packages/:id", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+      const data = servicePackageSchema.parse(request.body);
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { vendorProfile: true }
+      });
+
+      if (!user || user.activeRole !== 'VENDOR' || !user.vendorProfile) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Not authorized'
+        });
+      }
+
+      const pkg = await prisma.servicePackage.findUnique({
+        where: { id }
+      });
+
+      if (!pkg || pkg.vendorId !== user.vendorProfile.id) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Package not found or unauthorized'
+        });
+      }
+
+      const updatedPkg = await prisma.servicePackage.update({
+        where: { id },
+        data: {
+          title: data.title,
+          description: data.description,
+          price: data.price,
+          currency: data.currency,
+          duration: data.duration,
+          inclusions: data.inclusions,
+          isActive: data.isActive,
+          aboutVendor: data.aboutVendor,
+          mainImage: data.mainImage,
+          gallery: data.gallery || [],
+          location: data.location,
+          state: data.state,
+          availability: data.availability,
+          minBooking: data.minBooking,
+          maxBooking: data.maxBooking,
+          preparationTime: data.preparationTime
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Service package updated successfully',
+        data: { package: updatedPkg }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors.map(err => ({
+            field: err.path.join('.'),
+            message: err.message
+          }))
+        });
+      }
+      app.log.error('Update package error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get all packages for current vendor
+  app.get("/api/vendor/packages", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { vendorProfile: true }
+      });
+
+      if (!user || !user.vendorProfile) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Vendor profile not found'
+        });
+      }
+
+      const packages = await prisma.servicePackage.findMany({
+        where: { vendorId: user.vendorProfile.id },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      return reply.send({
+        success: true,
+        data: { packages }
+      });
+
+    } catch (error) {
+      app.log.error('Get vendor packages error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Delete a service package
+  app.delete("/api/vendor/packages/:id", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { vendorProfile: true }
+      });
+
+      if (!user || !user.vendorProfile) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Not authorized'
+        });
+      }
+
+      const pkg = await prisma.servicePackage.findUnique({
+        where: { id }
+      });
+
+      if (!pkg || pkg.vendorId !== user.vendorProfile.id) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Package not found or unauthorized'
+        });
+      }
+
+      await prisma.servicePackage.delete({
+        where: { id }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Service package deleted successfully'
+      });
+
+    } catch (error) {
+      app.log.error('Delete package error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+
+  // Get all active service packages (for discovery)
+  app.get("/api/packages", async (request, reply) => {
+    try {
+      const { category, minPrice, maxPrice, search, page = 1, limit = 12 } = request.query;
+
+      let whereClause = {
+        isActive: true
+      };
+
+      if (category) {
+        whereClause.vendor = {
+          category: category
+        };
+      }
+
+      if (minPrice) {
+        whereClause.price = { ...whereClause.price, gte: parseFloat(minPrice) };
+      }
+
+      if (maxPrice) {
+        whereClause.price = { ...whereClause.price, lte: parseFloat(maxPrice) };
+      }
+
+      if (search) {
+        whereClause.OR = [
+          { title: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } }
+        ];
+      }
+
+      const skip = (page - 1) * limit;
+
+      const [packages, total] = await Promise.all([
+        prisma.servicePackage.findMany({
+          where: whereClause,
+          skip,
+          take: parseInt(limit),
+          include: {
+            vendor: {
+              select: {
+                id: true,
+                businessName: true,
+                category: true,
+                rating: true,
+                user: {
+                  select: {
+                    firstName: true,
+                    lastName: true,
+                    avatarUrl: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        }),
+        prisma.servicePackage.count({ where: whereClause })
+      ]);
+
+      return reply.send({
+        success: true,
+        data: {
+          packages,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get all packages error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
   // Get all approved vendors
   app.get("/api/vendors", async (request, reply) => {
     try {
@@ -1812,25 +2377,10 @@ async function start() {
   });
 
   // Get service requests (for vendors)
-  app.get("/api/service-requests", { preHandler: [authenticate] }, async (request, reply) => {
+  // Get service requests (for discovery)
+  app.get("/api/service-requests", { preHandler: [optionalAuthenticate] }, async (request, reply) => {
     try {
-      const userId = request.user.userId;
-      const { serviceType, minBudget, maxBudget, page = 1, limit = 10 } = request.query;
-
-      const user = await prisma.user.findUnique({
-        where: { id: userId }
-      });
-
-      if (user.activeRole !== 'VENDOR') {
-        return reply.status(403).send({
-          success: false,
-          error: 'Only vendors can view service requests'
-        });
-      }
-
-      const vendor = await prisma.vendorProfile.findUnique({
-        where: { userId }
-      });
+      const { serviceType, minBudget, maxBudget, page = 1, limit = 10, search } = request.query;
 
       let whereClause = {
         status: 'ACTIVE'
@@ -1848,6 +2398,14 @@ async function start() {
         whereClause.budgetMax = { lte: parseInt(maxBudget) };
       }
 
+      if (search) {
+        whereClause.OR = [
+          { serviceType: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { eventLocation: { contains: search, mode: 'insensitive' } }
+        ];
+      }
+
       const skip = (page - 1) * limit;
 
       const [serviceRequests, total] = await Promise.all([
@@ -1861,8 +2419,7 @@ async function start() {
                 id: true,
                 firstName: true,
                 lastName: true,
-                email: true,
-                phoneNumber: true
+                avatarUrl: true
               }
             }
           },
