@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import {
     Search,
     Filter,
@@ -47,6 +48,7 @@ interface ServicePackage {
 }
 
 export default function ForClient() {
+    const router = useRouter();
     const [packages, setPackages] = useState<ServicePackage[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -237,7 +239,10 @@ export default function ForClient() {
                                                 <span className="text-xs text-gray-400 font-bold uppercase tracking-widest">Starting from</span>
                                                 <span className="text-xl font-black text-gray-900">£{pkg.price}</span>
                                             </div>
-                                            <button className="p-3 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-all shadow-lg shadow-orange-100 group-hover:scale-105 cursor-pointer">
+                                            <button
+                                                onClick={() => router.push(`/dashboard/services/${pkg.id}`)}
+                                                className="p-3 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-all shadow-lg shadow-orange-100 group-hover:scale-105 cursor-pointer"
+                                            >
                                                 <ArrowRight className="w-5 h-5" />
                                             </button>
                                         </div>

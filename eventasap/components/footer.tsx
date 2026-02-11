@@ -75,7 +75,9 @@ const Footer = () => {
                         <div className="space-y-4">
                             <div className="flex items-center space-x-2">
                                 <div className="flex flex-col">
-                                    <Image src="/images/events-asap-logo.png" alt="EventASAP" width={150} height={150} className='w-36 h-36' />
+                                    <Link href="/">
+                                        <Image src="/images/events-asap-logo.png" alt="EventASAP" width={150} height={150} className='w-36 h-36' />
+                                    </Link>
                                 </div>
                             </div>
                         </div>

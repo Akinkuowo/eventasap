@@ -29,6 +29,7 @@ import {
 import RoleSwitcher from './RoleSwitcher';
 import { toast } from 'sonner';
 import Image from 'next/image';
+import Link from 'next/link';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -200,9 +201,9 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                     {/* Logo */}
                     <div className="p-6 border-b border-gray-100">
                         <div className="flex items-center space-x-3">
-                            <div className="rounded-xl flex items-center justify-center">
+                            <Link href="/" className="rounded-xl flex items-center justify-center">
                                 <Image src="/images/events-asap-logo.png" alt="EventASAP" width={100} height={100} />
-                            </div>
+                            </Link>
                             <div>
 
                                 <p className="text-xs text-gray-500">Dashboard</p>

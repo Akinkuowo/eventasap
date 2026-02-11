@@ -24,6 +24,12 @@ interface ServicePackage {
     minBooking?: number;
     maxBooking?: number;
     preparationTime?: number;
+    aboutVendor?: string;
+    mainImage?: string;
+    gallery: string[];
+    location?: string;
+    state?: string;
+    availability?: any;
 }
 
 interface PackageCardProps {

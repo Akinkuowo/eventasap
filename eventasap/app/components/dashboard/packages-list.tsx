@@ -29,6 +29,13 @@ interface ServicePackage {
     minBooking?: number;
     maxBooking?: number;
     preparationTime?: number;
+    aboutVendor?: string;
+    mainImage?: string;
+    gallery: string[];
+    location?: string;
+    state?: string;
+    availability?: any;
+    // Add other fields from modal if needed
 }
 
 const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL;
