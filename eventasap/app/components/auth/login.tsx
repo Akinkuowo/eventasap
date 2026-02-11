@@ -345,9 +345,9 @@ const LoginForm = () => {
                                             name="email"
                                             value={formData.email}
                                             onChange={handleInputChange}
-                                            className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.email
+                                            className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.email
                                                 ? 'border-red-500 focus:ring-red-200'
-                                                : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                : 'border-black focus:ring-gray-200 focus:border-black'
                                                 }`}
                                             placeholder="your.email@example.com"
                                             disabled={isLoading}
@@ -383,9 +383,9 @@ const LoginForm = () => {
                                             name="password"
                                             value={formData.password}
                                             onChange={handleInputChange}
-                                            className={`w-full pl-10 pr-12 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.password
+                                            className={`w-full pl-10 pr-12 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.password
                                                 ? 'border-red-500 focus:ring-red-200'
-                                                : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                : 'border-black focus:ring-gray-200 focus:border-black'
                                                 }`}
                                             placeholder="Enter your password"
                                             disabled={isLoading}

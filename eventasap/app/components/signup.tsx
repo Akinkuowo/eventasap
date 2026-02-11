@@ -637,9 +637,9 @@ const UnifiedRegistration = () => {
                                                     name="email"
                                                     value={formData.email}
                                                     onChange={handleInputChange}
-                                                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.email || (emailChecked && !isEmailAvailable)
+                                                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.email || (emailChecked && !isEmailAvailable)
                                                         ? 'border-red-500 focus:ring-red-200'
-                                                        : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                        : 'border-black focus:ring-gray-200 focus:border-black'
                                                         }`}
                                                     placeholder="your.email@example.com"
                                                 />
@@ -748,9 +748,9 @@ const UnifiedRegistration = () => {
                                                         name="firstName"
                                                         value={formData.firstName}
                                                         onChange={handleInputChange}
-                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.firstName
+                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.firstName
                                                             ? 'border-red-500 focus:ring-red-200'
-                                                            : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                            : 'border-black focus:ring-gray-200 focus:border-black'
                                                             }`}
                                                         placeholder="John"
                                                     />
@@ -774,9 +774,9 @@ const UnifiedRegistration = () => {
                                                         name="lastName"
                                                         value={formData.lastName}
                                                         onChange={handleInputChange}
-                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.lastName
+                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.lastName
                                                             ? 'border-red-500 focus:ring-red-200'
-                                                            : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                            : 'border-black focus:ring-gray-200 focus:border-black'
                                                             }`}
                                                         placeholder="Doe"
                                                     />
@@ -801,9 +801,9 @@ const UnifiedRegistration = () => {
                                                     name="phoneNumber"
                                                     value={formData.phoneNumber}
                                                     onChange={handleInputChange}
-                                                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.phoneNumber
+                                                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.phoneNumber
                                                         ? 'border-red-500 focus:ring-red-200'
-                                                        : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                        : 'border-black focus:ring-gray-200 focus:border-black'
                                                         }`}
                                                     placeholder="+44 1234 567890"
                                                 />
@@ -827,9 +827,9 @@ const UnifiedRegistration = () => {
                                                     name="password"
                                                     value={formData.password}
                                                     onChange={handleInputChange}
-                                                    className={`w-full pl-10 pr-10 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.password
+                                                    className={`w-full pl-10 pr-10 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.password
                                                         ? 'border-red-500 focus:ring-red-200'
-                                                        : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                        : 'border-black focus:ring-gray-200 focus:border-black'
                                                         }`}
                                                     placeholder="Create a strong password"
                                                 />
@@ -860,9 +860,9 @@ const UnifiedRegistration = () => {
                                                     name="confirmPassword"
                                                     value={formData.confirmPassword}
                                                     onChange={handleInputChange}
-                                                    className={`w-full pl-10 pr-10 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.confirmPassword
+                                                    className={`w-full pl-10 pr-10 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.confirmPassword
                                                         ? 'border-red-500 focus:ring-red-200'
-                                                        : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                        : 'border-black focus:ring-gray-200 focus:border-black'
                                                         }`}
                                                     placeholder="Confirm your password"
                                                 />
@@ -905,9 +905,9 @@ const UnifiedRegistration = () => {
                                                         name="vendorData.businessName"
                                                         value={formData.vendorData?.businessName || ''}
                                                         onChange={handleInputChange}
-                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.businessName
+                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.businessName
                                                             ? 'border-red-500 focus:ring-red-200'
-                                                            : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                            : 'border-black focus:ring-gray-200 focus:border-black'
                                                             }`}
                                                         placeholder="Your Business Name"
                                                     />
@@ -931,9 +931,9 @@ const UnifiedRegistration = () => {
                                                         name="vendorData.businessPhone"
                                                         value={formData.vendorData?.businessPhone || ''}
                                                         onChange={handleInputChange}
-                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.businessPhone
+                                                        className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.businessPhone
                                                             ? 'border-red-500 focus:ring-red-200'
-                                                            : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                            : 'border-black focus:ring-gray-200 focus:border-black'
                                                             }`}
                                                         placeholder="+44 1234 567890"
                                                     />
@@ -958,9 +958,9 @@ const UnifiedRegistration = () => {
                                                     name="vendorData.businessEmail"
                                                     value={formData.vendorData?.businessEmail || ''}
                                                     onChange={handleInputChange}
-                                                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.businessEmail
+                                                    className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-black ${errors.businessEmail
                                                         ? 'border-red-500 focus:ring-red-200'
-                                                        : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
+                                                        : 'border-black focus:ring-gray-200 focus:border-black'
                                                         }`}
                                                     placeholder="business@example.com"
                                                 />
@@ -988,7 +988,7 @@ const UnifiedRegistration = () => {
                                                     <div className="relative">
                                                         <Globe className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                                                         {isLoadingCountries ? (
-                                                            <div className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl bg-gray-50 flex items-center">
+                                                            <div className="w-full pl-10 pr-4 py-3 border border-black rounded-xl bg-gray-50 flex items-center">
                                                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                                                                 Loading countries...
                                                             </div>
@@ -999,8 +999,8 @@ const UnifiedRegistration = () => {
                                                                 onChange={handleInputChange}
                                                                 className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.country
                                                                     ? 'border-red-500 focus:ring-red-200'
-                                                                    : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
-                                                                    }`}
+                                                                    : 'border-black focus:ring-gray-200 focus:border-black'
+                                                                    } text-black`}
                                                             >
                                                                 <option value="">Select Country</option>
                                                                 {countries.map((country) => (
@@ -1037,7 +1037,7 @@ const UnifiedRegistration = () => {
                                                                 value={formData.vendorData?.state || ''}
                                                                 onChange={handleInputChange}
                                                                 disabled={!formData.vendorData?.country || states.length === 0}
-                                                                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300 appearance-none disabled:bg-gray-50 disabled:cursor-not-allowed"
+                                                                className="w-full pl-10 pr-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black appearance-none disabled:bg-gray-50 disabled:cursor-not-allowed text-black"
                                                             >
                                                                 <option value="">Select State</option>
                                                                 {states.length === 0 && formData.vendorData?.country && (
@@ -1075,7 +1075,7 @@ const UnifiedRegistration = () => {
                                                                         placeholder="Search cities..."
                                                                         value={searchQuery}
                                                                         onChange={(e) => setSearchQuery(e.target.value)}
-                                                                        className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-orange-200"
+                                                                        className="w-full pl-9 pr-4 py-2 text-sm border border-black rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-200 text-black"
                                                                     />
                                                                 </div>
 
@@ -1086,8 +1086,8 @@ const UnifiedRegistration = () => {
                                                                     disabled={!formData.vendorData?.country || (!formData.vendorData?.state && states.length > 0)}
                                                                     className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.city
                                                                         ? 'border-red-500 focus:ring-red-200'
-                                                                        : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
-                                                                        }`}
+                                                                        : 'border-black focus:ring-gray-200 focus:border-black'
+                                                                        } text-black`}
                                                                 >
                                                                     <option value="">Select City</option>
                                                                     {filteredCities.length === 0 && (
@@ -1126,8 +1126,8 @@ const UnifiedRegistration = () => {
                                                     onChange={handleInputChange}
                                                     className={`w-full pl-10 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:border-transparent ${errors.category
                                                         ? 'border-red-500 focus:ring-red-200'
-                                                        : 'border-gray-300 focus:ring-orange-200 focus:border-orange-300'
-                                                        }`}
+                                                        : 'border-black focus:ring-gray-200 focus:border-black'
+                                                        } text-black`}
                                                 >
                                                     <option value="">Select Category</option>
                                                     {serviceCategories.map(category => (
@@ -1152,7 +1152,7 @@ const UnifiedRegistration = () => {
                                                 value={formData.vendorData?.description || ''}
                                                 onChange={handleInputChange}
                                                 rows={3}
-                                                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300"
+                                                className="w-full px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black text-black"
                                                 placeholder="Describe your services and expertise..."
                                             />
                                         </div>
@@ -1164,7 +1164,7 @@ const UnifiedRegistration = () => {
                                                 name="vendorData.whatsappEnabled"
                                                 checked={formData.vendorData?.whatsappEnabled || false}
                                                 onChange={handleInputChange}
-                                                className="w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
+                                                className="w-4 h-4 text-orange-600 border-black rounded focus:ring-orange-500"
                                             />
                                             <label htmlFor="whatsappEnabled" className="text-sm text-gray-700">
                                                 Enable WhatsApp notifications for booking inquiries
@@ -1312,7 +1312,7 @@ const UnifiedRegistration = () => {
 
                                             <button
                                                 onClick={() => router.push('/login')}
-                                                className="w-full px-6 py-3 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
+                                                className="w-full px-6 py-3 border border-black text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
                                             >
                                                 Back to Login
                                             </button>
@@ -1327,7 +1327,7 @@ const UnifiedRegistration = () => {
                                         <button
                                             onClick={handlePreviousStep}
                                             disabled={isLoading}
-                                            className="px-6 py-3 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors flex items-center"
+                                            className="px-6 py-3 border border-black text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors flex items-center"
                                         >
                                             <ArrowLeft className="w-4 h-4 mr-2" />
                                             Back
