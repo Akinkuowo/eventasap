@@ -1,4 +1,4 @@
-// server.js - EventASAP Backend with Email Verification
+// server.js - EventASAP Backend with Email Verification and Business Proof Upload
 require('dotenv').config();
 const Fastify = require("fastify");
 const { PrismaClient } = require("@prisma/client");
@@ -11,9 +11,12 @@ const multipart = require("@fastify/multipart");
 const { z } = require("zod");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
+const fs = require("fs").promises;
+const path = require("path");
+const fastifyStatic = require("@fastify/static");
 
 const app = Fastify({
-  bodyLimit: 50 * 1024 * 1024, // 50MB limit for base64 images and gallery uploads
+  bodyLimit: 100 * 1024 * 1024, // 100MB limit for base64 images and gallery uploads
   logger: {
     transport: {
       target: 'pino-pretty',
@@ -122,16 +125,25 @@ const emailTemplates = {
 // Helper function to send email
 const sendEmail = async (to, template) => {
   try {
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
       from: `"EventASAP" <${process.env.SMTP_USER}>`,
       to,
       subject: template.subject,
       html: template.html,
     });
+    app.log.info(`Email sent successfully to ${to}`, { messageId: info.messageId });
     return true;
   } catch (error) {
-    app.log.error('Email sending error:', error);
-    return false;
+    // Log comprehensive error details
+    app.log.error('Email sending failed:', {
+      message: error.message,
+      code: error.code,
+      command: error.command,
+      response: error.response,
+      responseCode: error.responseCode,
+      stack: error.stack
+    });
+    throw error;
   }
 };
 
@@ -242,8 +254,6 @@ const servicePackageSchema = z.object({
   preparationTime: z.number().optional()
 });
 
-
-
 const profileUpdateSchema = z.object({
   firstName: z.string().min(2).optional(),
   lastName: z.string().min(2).optional(),
@@ -290,7 +300,16 @@ const preferenceUpdateSchema = z.object({
   }).optional()
 });
 
-// In generateTokens function, update to:
+// Admin schemas
+const vendorApprovalSchema = z.object({
+  notes: z.string().optional()
+});
+
+const vendorRejectionSchema = z.object({
+  reason: z.string().min(10, 'Rejection reason must be at least 10 characters')
+});
+
+// Generate JWT tokens
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
     {
@@ -314,7 +333,6 @@ const generateTokens = (user) => {
 };
 
 // Authentication middleware
-// Update the authenticate middleware:
 const authenticate = async (request, reply) => {
   try {
     const authHeader = request.headers.authorization;
@@ -406,10 +424,13 @@ const optionalAuthenticate = async (request, reply) => {
 
 async function start() {
   // Register plugins
-  await app.register(cors, {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    credentials: true
-  });
+ await app.register(cors, {
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Type', 'Authorization']
+});
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
@@ -434,6 +455,12 @@ async function start() {
       version: "1.0.0",
       timestamp: new Date().toISOString()
     };
+  });
+
+  // Serve static files for proof of documents
+  await app.register(fastifyStatic, {
+    root: path.join(__dirname, 'proof-of-document'),
+    prefix: '/uploads/proofs/',
   });
 
   app.get("/health", async () => {
@@ -515,7 +542,15 @@ async function start() {
         verificationUrl
       );
 
-      await sendEmail(data.email, emailTemplate);
+      try {
+        await sendEmail(data.email, emailTemplate);
+      } catch (emailError) {
+        // Log but don't fail registration - user can resend later
+        app.log.error('Failed to send verification email during registration:', {
+          email: data.email,
+          error: emailError.message
+        });
+      }
 
       return reply.send({
         success: true,
@@ -605,7 +640,7 @@ async function start() {
           token: accessToken,
           ipAddress: request.ip,
           userAgent: request.headers['user-agent'],
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // Consistent 24 hours
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         }
       });
 
@@ -755,7 +790,7 @@ async function start() {
           token: accessToken,
           ipAddress: request.ip,
           userAgent: request.headers['user-agent'],
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         }
       });
 
@@ -772,6 +807,7 @@ async function start() {
             hasVendorProfile: user.hasVendorProfile,
             hasClientProfile: user.hasClientProfile,
             emailVerified: user.emailVerified,
+            isAdmin: user.isAdmin || false,
             vendorProfile: user.vendorProfile,
             clientProfile: user.clientProfile
           },
@@ -850,7 +886,7 @@ async function start() {
 
       return reply.send({
         success: true,
-        message: 'Vendor profile created successfully! Awaiting approval.',
+        message: 'Vendor profile created successfully! Please upload proof of business for approval.',
         data: {
           vendorProfile: {
             businessName: vendorProfile.businessName,
@@ -1022,6 +1058,7 @@ async function start() {
             hasVendorProfile: user.hasVendorProfile,
             hasClientProfile: user.hasClientProfile,
             emailVerified: user.emailVerified,
+            isAdmin: user.isAdmin || false,
             ...activeProfile
           },
           availableRoles
@@ -1110,55 +1147,168 @@ async function start() {
   });
 
   // Update vendor profile details (including business proof)
-  app.put("/api/vendor/profile", { preHandler: [authenticate] }, async (request, reply) => {
-    try {
-      const userId = request.user.userId;
-      const data = vendorProfileUpdateSchema.parse(request.body);
+ app.put("/api/vendor/profile", { preHandler: [authenticate] }, async (request, reply) => {
+  try {
+    const userId = request.user.userId;
+    
+    // Add CORS headers explicitly
+    reply.header('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'http://localhost:3000');
+    reply.header('Access-Control-Allow-Credentials', 'true');
+    
+    const data = vendorProfileUpdateSchema.parse(request.body);
 
-      const userProfile = await prisma.vendorProfile.findUnique({
-        where: { userId }
+    const userProfile = await prisma.vendorProfile.findUnique({
+      where: { userId }
+    });
+
+    if (!userProfile) {
+      return reply.status(404).send({
+        success: false,
+        error: 'Vendor profile not found'
       });
-
-      if (!userProfile) {
-        return reply.status(404).send({
-          success: false,
-          error: 'Vendor profile not found'
-        });
-      }
-
-      // Check if businessProof is being updated
-      let updateData = {
-        ...data,
-        updatedAt: new Date()
-      };
-
-      if (data.businessProof) {
-        updateData.status = 'PENDING';
-        updateData.isVerified = false;
-      }
-
-      const updatedProfile = await prisma.vendorProfile.update({
-        where: { id: userProfile.id },
-        data: updateData
-      });
-
-      return reply.send({
-        success: true,
-        message: 'Vendor profile updated successfully',
-        data: { vendorProfile: updatedProfile }
-      });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({
-          success: false,
-          error: 'Validation failed',
-          details: error.errors
-        });
-      }
-      app.log.error('Update vendor profile error:', error);
-      return reply.status(500).send({ success: false, error: 'Internal server error' });
     }
-  });
+
+    // Prepare update data
+    let updateData = {
+      ...data,
+      updatedAt: new Date()
+    };
+
+    // Remove businessProof from updateData initially
+    delete updateData.businessProof;
+
+    // Handle business proof document upload
+    if (data.businessProof && data.businessProof.startsWith('data:')) {
+      try {
+        // Ensure upload directory exists
+        const uploadDir = path.join(__dirname, 'proof-of-document');
+        try {
+          await fs.access(uploadDir);
+        } catch {
+          await fs.mkdir(uploadDir, { recursive: true });
+          app.log.info('Created proof-of-document directory');
+        }
+
+        // Extract base64 data
+        const matches = data.businessProof.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+
+        if (matches && matches.length === 3) {
+          const mimeType = matches[1];
+          const base64Data = matches[2];
+          
+          // Validate base64 string length before converting
+          if (base64Data.length > 15 * 1024 * 1024) { // ~15MB base64 = ~10MB file
+            return reply.status(400).send({
+              success: false,
+              error: 'File size exceeds 10MB limit'
+            });
+          }
+          
+          const buffer = Buffer.from(base64Data, 'base64');
+
+          // Validate file size (10MB limit)
+          if (buffer.length > 10 * 1024 * 1024) {
+            return reply.status(400).send({
+              success: false,
+              error: 'File size exceeds 10MB limit'
+            });
+          }
+
+          // Determine file extension
+          const extensionMap = {
+            'image/png': 'png',
+            'image/jpeg': 'jpg',
+            'image/jpg': 'jpg',
+            'application/pdf': 'pdf',
+            'image/webp': 'webp'
+          };
+          const extension = extensionMap[mimeType] || 'bin';
+
+          // Validate file type
+          if (!['png', 'jpg', 'jpeg', 'pdf', 'webp'].includes(extension)) {
+            return reply.status(400).send({
+              success: false,
+              error: 'Invalid file type. Only PNG, JPG, PDF, and WEBP are allowed'
+            });
+          }
+
+          // Generate unique filename
+          const timestamp = Date.now();
+          const randomString = crypto.randomBytes(8).toString('hex');
+          const filename = `proof-${userId}-${timestamp}-${randomString}.${extension}`;
+          const filepath = path.join(uploadDir, filename);
+
+          // Save file
+          await fs.writeFile(filepath, buffer);
+          app.log.info(`Business proof document saved: ${filename}`);
+
+          // Delete old proof file if exists
+          if (userProfile.businessProof) {
+            const oldFilePath = path.join(uploadDir, userProfile.businessProof);
+            try {
+              await fs.unlink(oldFilePath);
+              app.log.info(`Old business proof deleted: ${userProfile.businessProof}`);
+            } catch (unlinkError) {
+              app.log.warn(`Could not delete old proof file: ${userProfile.businessProof}`);
+            }
+          }
+
+          // Update data with new filename and reset approval status
+          updateData.businessProof = filename;
+          updateData.status = 'PENDING';
+          updateData.isVerified = false;
+
+        } else {
+          return reply.status(400).send({
+            success: false,
+            error: 'Invalid base64 format'
+          });
+        }
+      } catch (fileError) {
+        app.log.error('File saving error:', fileError);
+        return reply.status(500).send({
+          success: false,
+          error: 'Failed to save business proof document',
+          details: process.env.NODE_ENV === 'development' ? fileError.message : undefined
+        });
+      }
+    }
+
+    const updatedProfile = await prisma.vendorProfile.update({
+      where: { id: userProfile.id },
+      data: updateData
+    });
+
+    return reply.send({
+      success: true,
+      message: updateData.businessProof 
+        ? 'Vendor profile updated successfully. Your business proof is pending approval.' 
+        : 'Vendor profile updated successfully',
+      data: { 
+        vendorProfile: {
+          ...updatedProfile,
+          businessProofUrl: updatedProfile.businessProof 
+            ? `/uploads/proofs/${updatedProfile.businessProof}`
+            : null
+        }
+      }
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return reply.status(400).send({
+        success: false,
+        error: 'Validation failed',
+        details: error.errors
+      });
+    }
+    app.log.error('Update vendor profile error:', error);
+    return reply.status(500).send({ 
+      success: false, 
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
 
   // Update user preferences
   app.put("/api/user/update-preferences", { preHandler: [authenticate] }, async (request, reply) => {
@@ -1185,6 +1335,377 @@ async function start() {
       }
       app.log.error('Update preferences error:', error);
       return reply.status(500).send({ success: false, error: 'Internal server error' });
+    }
+  });
+
+  // ============================================
+  // ADMIN ENDPOINTS - Vendor Approval Management
+  // ============================================
+
+  // Get all vendors pending approval
+  app.get("/api/admin/vendors/pending", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      
+      // Check if user is admin
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || !user.isAdmin) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const { page = 1, limit = 10 } = request.query;
+      const skip = (page - 1) * limit;
+
+      const [vendors, total] = await Promise.all([
+        prisma.vendorProfile.findMany({
+          where: {
+            status: 'PENDING',
+            businessProof: { not: null }
+          },
+          skip,
+          take: parseInt(limit),
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                phoneNumber: true,
+                createdAt: true
+              }
+            }
+          },
+          orderBy: { updatedAt: 'desc' }
+        }),
+        prisma.vendorProfile.count({
+          where: {
+            status: 'PENDING',
+            businessProof: { not: null }
+          }
+        })
+      ]);
+
+      return reply.send({
+        success: true,
+        data: {
+          vendors: vendors.map(v => ({
+            ...v,
+            businessProofUrl: v.businessProof ? `/uploads/proofs/${v.businessProof}` : null
+          })),
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get pending vendors error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get all vendors (approved, pending, rejected) - Admin only
+  app.get("/api/admin/vendors/all", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || !user.isAdmin) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const { status, page = 1, limit = 10 } = request.query;
+      const skip = (page - 1) * limit;
+
+      let whereClause = {};
+      if (status) {
+        whereClause.status = status;
+      }
+
+      const [vendors, total, stats] = await Promise.all([
+        prisma.vendorProfile.findMany({
+          where: whereClause,
+          skip,
+          take: parseInt(limit),
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                phoneNumber: true,
+                createdAt: true
+              }
+            }
+          },
+          orderBy: { updatedAt: 'desc' }
+        }),
+        prisma.vendorProfile.count({ where: whereClause }),
+        prisma.vendorProfile.groupBy({
+          by: ['status'],
+          _count: true
+        })
+      ]);
+
+      return reply.send({
+        success: true,
+        data: {
+          vendors: vendors.map(v => ({
+            ...v,
+            businessProofUrl: v.businessProof ? `/uploads/proofs/${v.businessProof}` : null
+          })),
+          stats: stats.reduce((acc, curr) => {
+            acc[curr.status] = curr._count;
+            return acc;
+          }, {}),
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / limit)
+          }
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get all vendors error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Approve vendor
+  app.post("/api/admin/vendors/:vendorId/approve", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { vendorId } = request.params;
+      const data = vendorApprovalSchema.parse(request.body);
+
+      // Check if user is admin
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || !user.isAdmin) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const vendor = await prisma.vendorProfile.findUnique({
+        where: { id: vendorId },
+        include: { user: true }
+      });
+
+      if (!vendor) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Vendor not found'
+        });
+      }
+
+      const updatedVendor = await prisma.vendorProfile.update({
+        where: { id: vendorId },
+        data: {
+          status: 'APPROVED',
+          isVerified: true,
+          approvalNotes: data.notes,
+          approvedAt: new Date(),
+          approvedBy: userId
+        }
+      });
+
+      // Create notification for vendor
+      await prisma.notification.create({
+        data: {
+          userId: vendor.userId,
+          type: 'VENDOR_APPROVED',
+          title: 'Vendor Profile Approved! 🎉',
+          message: 'Congratulations! Your vendor profile has been approved. You can now start offering your services.',
+          data: { vendorId, notes: data.notes }
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Vendor approved successfully',
+        data: { vendor: updatedVendor }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      app.log.error('Approve vendor error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Reject vendor
+  app.post("/api/admin/vendors/:vendorId/reject", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { vendorId } = request.params;
+      const data = vendorRejectionSchema.parse(request.body);
+
+      // Check if user is admin
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || !user.isAdmin) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const vendor = await prisma.vendorProfile.findUnique({
+        where: { id: vendorId },
+        include: { user: true }
+      });
+
+      if (!vendor) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Vendor not found'
+        });
+      }
+
+      const updatedVendor = await prisma.vendorProfile.update({
+        where: { id: vendorId },
+        data: {
+          status: 'REJECTED',
+          isVerified: false,
+          rejectionReason: data.reason,
+          rejectedAt: new Date(),
+          rejectedBy: userId
+        }
+      });
+
+      // Create notification for vendor
+      await prisma.notification.create({
+        data: {
+          userId: vendor.userId,
+          type: 'VENDOR_REJECTED',
+          title: 'Vendor Profile Requires Updates',
+          message: `Your vendor profile submission needs attention. Reason: ${data.reason}`,
+          data: { vendorId, reason: data.reason }
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Vendor rejected. Notification sent to vendor.',
+        data: { vendor: updatedVendor }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      app.log.error('Reject vendor error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get business proof document (Vendor or Admin only)
+  app.get("/api/vendor/business-proof/:filename", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const { filename } = request.params;
+      const userId = request.user.userId;
+
+      // Sanitize filename to prevent directory traversal
+      const sanitizedFilename = path.basename(filename);
+      const filepath = path.join(__dirname, 'proof-of-document', sanitizedFilename);
+
+      // Check file exists
+      try {
+        await fs.access(filepath);
+      } catch {
+        return reply.status(404).send({
+          success: false,
+          error: 'Document not found'
+        });
+      }
+
+      // Check authorization - either the vendor themselves or an admin
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { vendorProfile: true }
+      });
+
+      const isOwner = user.vendorProfile?.businessProof === sanitizedFilename;
+      const isAdmin = user.isAdmin;
+
+      if (!isOwner && !isAdmin) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Not authorized to view this document'
+        });
+      }
+
+      // Determine content type
+      const ext = path.extname(sanitizedFilename).toLowerCase();
+      const contentTypes = {
+        '.pdf': 'application/pdf',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp'
+      };
+      const contentType = contentTypes[ext] || 'application/octet-stream';
+
+      // Send file
+      const fileBuffer = await fs.readFile(filepath);
+      return reply
+        .header('Content-Type', contentType)
+        .header('Content-Disposition', `inline; filename="${sanitizedFilename}"`)
+        .send(fileBuffer);
+
+    } catch (error) {
+      app.log.error('Get business proof error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
     }
   });
 
@@ -1222,7 +1743,6 @@ async function start() {
   });
 
   // Refresh token
-  // Update the refresh token endpoint:
   app.post("/api/auth/refresh-token", async (request, reply) => {
     try {
       const { refreshToken } = request.body;
@@ -1266,7 +1786,7 @@ async function start() {
         where: { id: tokenData.id },
         data: {
           token: newRefreshToken,
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
         }
       });
 
@@ -1279,7 +1799,7 @@ async function start() {
           }
         },
         update: {
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
           ipAddress: request.ip,
           userAgent: request.headers['user-agent']
         },
@@ -1309,7 +1829,7 @@ async function start() {
     }
   });
 
-  // Add this endpoint to validate tokens without expiring them
+  // Validate token endpoint
   app.get("/api/auth/validate-token", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       return reply.send({
@@ -1350,7 +1870,7 @@ async function start() {
     }
   });
 
-  // Check business email availability (for vendors)
+  // Check business email availability
   app.get("/api/auth/check-business-email/:email", async (request, reply) => {
     try {
       const { email } = request.params;
@@ -1372,13 +1892,12 @@ async function start() {
     }
   });
 
-  // Create a booking (Client creates booking with vendor)
+  // Create a booking
   app.post("/api/bookings", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
       const data = bookingSchema.parse(request.body);
 
-      // Check if user is a client
       const user = await prisma.user.findUnique({
         where: { id: userId },
         include: { clientProfile: true }
@@ -1391,7 +1910,6 @@ async function start() {
         });
       }
 
-      // Check if vendor exists
       const vendor = await prisma.user.findUnique({
         where: { id: data.vendorId },
         include: { vendorProfile: true }
@@ -1442,7 +1960,6 @@ async function start() {
         }
       });
 
-      // Create notification for vendor
       await prisma.notification.create({
         data: {
           userId: data.vendorId,
@@ -1478,11 +1995,11 @@ async function start() {
     }
   });
 
-  // Get user bookings (both client and vendor)
+  // Get user bookings
   app.get("/api/bookings", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
-      const { role, status, page = 1, limit = 10 } = request.query;
+      const { status, page = 1, limit = 10 } = request.query;
 
       const user = await prisma.user.findUnique({
         where: { id: userId }
@@ -1536,7 +2053,6 @@ async function start() {
         prisma.booking.count({ where: whereClause })
       ]);
 
-      // Calculate stats
       const stats = {
         total: total,
         pending: await prisma.booking.count({ where: { ...whereClause, status: 'PENDING' } }),
@@ -1611,7 +2127,6 @@ async function start() {
         });
       }
 
-      // Check authorization
       if (booking.clientId !== userId && booking.vendorId !== userId) {
         return reply.status(403).send({
           success: false,
@@ -1633,7 +2148,7 @@ async function start() {
     }
   });
 
-  // Update booking (vendor updates status, price, etc.)
+  // Update booking
   app.put("/api/bookings/:id", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
@@ -1651,7 +2166,6 @@ async function start() {
         });
       }
 
-      // Only vendor can update booking
       if (booking.vendorId !== userId) {
         return reply.status(403).send({
           success: false,
@@ -1670,7 +2184,6 @@ async function start() {
         }
       });
 
-      // Create notification for client
       if (data.status && data.status !== booking.status) {
         await prisma.notification.create({
           data: {
@@ -1708,9 +2221,7 @@ async function start() {
     }
   });
 
-  // Payments API
-
-  // Process a payment (Mock flow)
+  // Process payment
   app.post("/api/payments", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
@@ -1741,7 +2252,6 @@ async function start() {
         });
       }
 
-      // Create payment record
       const payment = await prisma.$transaction(async (tx) => {
         const p = await tx.payment.create({
           data: {
@@ -1754,7 +2264,6 @@ async function start() {
           }
         });
 
-        // Update booking status
         await tx.booking.update({
           where: { id: bookingId },
           data: {
@@ -1766,7 +2275,6 @@ async function start() {
         return p;
       });
 
-      // Create notification for vendor
       await prisma.notification.create({
         data: {
           userId: booking.vendorId,
@@ -1851,9 +2359,7 @@ async function start() {
     }
   });
 
-  // Service Package Routes (Vendor Management)
-
-  // Create a new service package
+  // Create service package
   app.post("/api/vendor/packages", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
@@ -1926,8 +2432,7 @@ async function start() {
     }
   });
 
-
-  // Update a service package
+  // Update service package
   app.put("/api/vendor/packages/:id", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
@@ -2004,7 +2509,7 @@ async function start() {
     }
   });
 
-  // Get all packages for current vendor
+  // Get vendor packages
   app.get("/api/vendor/packages", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
@@ -2040,7 +2545,7 @@ async function start() {
     }
   });
 
-  // Delete a service package
+  // Delete service package
   app.delete("/api/vendor/packages/:id", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
@@ -2087,8 +2592,7 @@ async function start() {
     }
   });
 
-
-  // Get all active service packages (for discovery)
+  // Get all packages (public)
   app.get("/api/packages", async (request, reply) => {
     try {
       const { category, minPrice, maxPrice, search, page = 1, limit = 12 } = request.query;
@@ -2169,12 +2673,11 @@ async function start() {
     }
   });
 
-  // Get all approved vendors
+  // Get all vendors
   app.get("/api/vendors", async (request, reply) => {
     try {
       const { category, city, search, page = 1, limit = 12, onlyBooked = 'false' } = request.query;
 
-      // Check authentication if onlyBooked is requested
       let currentUserId = null;
       if (onlyBooked === 'true') {
         const authHeader = request.headers.authorization;
@@ -2212,7 +2715,6 @@ async function start() {
         ];
       }
 
-      // Filter by vendors booked by the current user
       if (onlyBooked === 'true' && currentUserId) {
         whereClause.bookings = {
           some: {
@@ -2276,8 +2778,6 @@ async function start() {
     }
   });
 
-  // Service Requests (Client posts service needs)
-
   // Create service request
   app.post("/api/service-requests", { preHandler: [authenticate] }, async (request, reply) => {
     try {
@@ -2323,7 +2823,6 @@ async function start() {
         }
       });
 
-      // Find relevant vendors and notify them
       const relevantVendors = await prisma.user.findMany({
         where: {
           activeRole: 'VENDOR',
@@ -2331,7 +2830,7 @@ async function start() {
             category: data.serviceType
           }
         },
-        take: 10 // Limit notifications
+        take: 10
       });
 
       for (const vendor of relevantVendors) {
@@ -2376,8 +2875,7 @@ async function start() {
     }
   });
 
-  // Get service requests (for vendors)
-  // Get service requests (for discovery)
+  // Get service requests
   app.get("/api/service-requests", { preHandler: [optionalAuthenticate] }, async (request, reply) => {
     try {
       const { serviceType, minBudget, maxBudget, page = 1, limit = 10, search } = request.query;

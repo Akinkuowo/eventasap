@@ -38,8 +38,6 @@ const LoginForm = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [showVerificationModal, setShowVerificationModal] = useState(false);
     const [pendingVerificationEmail, setPendingVerificationEmail] = useState('');
-    const [showRoleSelection, setShowRoleSelection] = useState(false);
-    const [loginUserData, setLoginUserData] = useState<any>(null);
 
     // Check for redirect from registration
     useEffect(() => {
@@ -113,20 +111,10 @@ const LoginForm = () => {
                 localStorage.setItem('refreshToken', data.data.refreshToken);
                 localStorage.setItem('user', JSON.stringify(data.data.user));
 
-                // Check if user has both profiles
-                if (data.data.user.hasVendorProfile && data.data.user.hasClientProfile) {
-                    setLoginUserData(data.data.user);
-                    setShowRoleSelection(true);
-                } else {
-                    // Redirect based on active role
-                    setTimeout(() => {
-                        if (data.data.user.activeRole === 'VENDOR') {
-                            router.push('/dashboard');
-                        } else {
-                            router.push('/dashboard');
-                        }
-                    }, 500);
-                }
+                // Redirect to dashboard immediately
+                setTimeout(() => {
+                    router.push('/dashboard');
+                }, 500);
 
             } else if (response.status === 403 && data.requiresVerification) {
                 // Email not verified
@@ -150,43 +138,6 @@ const LoginForm = () => {
         }
     };
 
-    const handleRoleSelect = (role: 'VENDOR' | 'CLIENT') => {
-        if (!loginUserData) return;
-
-        setIsLoading(true);
-
-        // If user is already in the selected role, redirect
-        if (loginUserData.activeRole === role) {
-            router.push('/dashboard');
-            return;
-        }
-
-        // Otherwise, switch roles
-        fetch(`${NEXT_AUTH_PATH}/api/auth/switch-role`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('accessToken')}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ role })
-        })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    toast.success(`Switched to ${role.toLowerCase()} mode`);
-                    localStorage.setItem('user', JSON.stringify(data.data.user));
-                    router.push('/dashboard');
-                } else {
-                    toast.error(data.error || 'Failed to switch role');
-                }
-            })
-            .catch(error => {
-                toast.error('Network error');
-            })
-            .finally(() => {
-                setIsLoading(false);
-            });
-    };
 
     const handleResendVerification = async () => {
         try {
@@ -299,82 +250,6 @@ const LoginForm = () => {
         </div>
     );
 
-    const RoleSelectionModal = () => (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="bg-white rounded-2xl p-8 max-w-lg w-full"
-            >
-                <div className="text-center mb-8">
-                    <div className="w-20 h-20 bg-gradient-to-r from-orange-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Sparkles className="w-10 h-10 text-white" />
-                    </div>
-                    <h3 className="text-2xl font-bold text-gray-900 mb-2">Welcome Back!</h3>
-                    <p className="text-gray-600">
-                        Choose how you want to access EventASAP
-                    </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-6 mb-8">
-                    <button
-                        onClick={() => handleRoleSelect('CLIENT')}
-                        disabled={isLoading}
-                        className="p-6 border-2 border-orange-200 bg-gradient-to-br from-orange-50 to-white rounded-2xl hover:border-orange-400 hover:shadow-lg transition-all duration-300 group"
-                    >
-                        <div className="flex flex-col items-center space-y-4">
-                            <div className="w-16 h-16 bg-gradient-to-r from-orange-500 to-orange-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                                <Users className="w-8 h-8 text-white" />
-                            </div>
-                            <div>
-                                <h4 className="font-bold text-gray-900 text-lg mb-1">Client Mode</h4>
-                                <p className="text-sm text-gray-600">Browse and book vendors</p>
-                            </div>
-                            <div className="text-sm text-orange-600 font-medium">
-                                {loginUserData?.activeRole === 'CLIENT' ? 'Current Mode' : 'Switch to Client'}
-                            </div>
-                        </div>
-                    </button>
-
-                    <button
-                        onClick={() => handleRoleSelect('VENDOR')}
-                        disabled={isLoading || !loginUserData?.hasVendorProfile}
-                        className={`p-6 border-2 rounded-2xl hover:shadow-lg transition-all duration-300 group ${!loginUserData?.hasVendorProfile
-                            ? 'border-gray-200 bg-gray-50 cursor-not-allowed'
-                            : 'border-purple-200 bg-gradient-to-br from-purple-50 to-white hover:border-purple-400'
-                            }`}
-                    >
-                        <div className="flex flex-col items-center space-y-4">
-                            <div className={`w-16 h-16 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform ${!loginUserData?.hasVendorProfile
-                                ? 'bg-gray-200'
-                                : 'bg-gradient-to-r from-purple-500 to-purple-600'
-                                }`}>
-                                <Briefcase className={`w-8 h-8 ${!loginUserData?.hasVendorProfile ? 'text-gray-400' : 'text-white'
-                                    }`} />
-                            </div>
-                            <div>
-                                <h4 className="font-bold text-gray-900 text-lg mb-1">Vendor Mode</h4>
-                                <p className="text-sm text-gray-600">Manage your business</p>
-                            </div>
-                            {!loginUserData?.hasVendorProfile ? (
-                                <div className="text-sm text-gray-500">Complete vendor profile first</div>
-                            ) : (
-                                <div className="text-sm text-purple-600 font-medium">
-                                    {loginUserData?.activeRole === 'VENDOR' ? 'Current Mode' : 'Switch to Vendor'}
-                                </div>
-                            )}
-                        </div>
-                    </button>
-                </div>
-
-                <div className="text-center">
-                    <p className="text-sm text-gray-500">
-                        You can switch between modes anytime in your dashboard
-                    </p>
-                </div>
-            </motion.div>
-        </div>
-    );
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-purple-50 flex items-center justify-center p-4">
@@ -652,7 +527,6 @@ const LoginForm = () => {
 
             {/* Modals */}
             {showVerificationModal && <VerificationModal />}
-            {showRoleSelection && <RoleSelectionModal />}
         </div>
     );
 };
