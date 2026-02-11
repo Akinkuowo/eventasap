@@ -27,18 +27,23 @@ interface ServicePackage {
     duration: number;
     inclusions: string[];
     mainImage: string | null;
+    gallery: string[];
+    location?: string;
     vendor: {
         id: string;
+        userId: string;  // Add this field
         businessName: string;
         category: string;
         rating: number;
         user: {
+            id: string;
             firstName: string;
             lastName: string;
             avatarUrl: string | null;
         }
     }
 }
+
 
 export default function ServiceDetailsPage() {
     const params = useParams();
@@ -63,20 +68,29 @@ export default function ServiceDetailsPage() {
     const fetchPackageDetails = async (id: string) => {
         setIsLoading(true);
         try {
-            // First try fetching specifically (assuming endpoint exists)
+            // Try the single package endpoint first
             const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/packages/${id}`);
             const data = await response.json();
 
-            if (data.success) {
+            console.log('API Response:', data);
+            console.log('API Response data field:', data.data);
+
+            if (data.success && data.data) {
+                console.log('Setting package from single endpoint:', data.data);
                 setPkg(data.data);
             } else {
-                // Fallback: fetch all and find (not ideal but robust for now)
+                // Fallback: fetch all and find
                 const allResponse = await fetch(`${NEXT_PUBLIC_API_URL}/api/packages?limit=100`);
                 const allData = await allResponse.json();
+                console.log('Fallback API Response:', allData);
                 if (allData.success) {
                     const found = allData.data.packages.find((p: ServicePackage) => p.id === id);
-                    if (found) setPkg(found);
-                    else toast.error('Package not found');
+                    if (found) {
+                        console.log('Setting package from fallback:', found);
+                        setPkg(found);
+                    } else {
+                        toast.error('Package not found');
+                    }
                 }
             }
         } catch (error) {
@@ -94,20 +108,43 @@ export default function ServiceDetailsPage() {
 
         setIsBooking(true);
         try {
+            // Debug: Log the entire vendor object to see what we're getting
+            console.log('Full package object:', pkg);
+            console.log('Vendor object:', pkg.vendor);
+            console.log('Vendor user object:', pkg.vendor.user);
+            console.log('Vendor userId field:', pkg.vendor.userId);
+
+            // Make sure we have the vendor user ID
+            const vendorUserId = pkg.vendor.user?.id || pkg.vendor.userId;
+
+            console.log('Resolved vendorUserId:', vendorUserId);
+
+            if (!vendorUserId) {
+                console.error('VENDOR ID MISSING - pkg.vendor:', pkg.vendor);
+                toast.error('Vendor information is incomplete');
+                setIsBooking(false);
+                return;
+            }
+
             const bookingData = {
-                servicePackageId: pkg.id,
-                vendorId: pkg.vendor.id,
-                eventDate: `${eventDate}T${eventTime}:00.000Z`, // Construct ISO string
+                vendorId: vendorUserId,  // THIS WAS MISSING!
+                serviceId: pkg.id,
+                serviceType: pkg.title,
+                eventDate: `${eventDate}T${eventTime}:00.000Z`,
                 eventLocation: location,
-                description: description,
-                requirements: [description], // Mapping description to requirements as "proof/details"
-                guests: parseInt(guests) || 0,
-                status: 'PENDING',
-                quotedPrice: pkg.price // Initial price from package
+                guests: parseInt(guests) || 1,
+                budget: pkg.price,
+                message: description,
+                customRequirements: description ? [description] : [],
             };
+
+            console.log('Booking data being sent:', bookingData);
 
             const response = await fetchWithAuth(`${NEXT_PUBLIC_API_URL}/api/bookings`, {
                 method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
                 body: JSON.stringify(bookingData),
             });
 
@@ -117,6 +154,7 @@ export default function ServiceDetailsPage() {
                 toast.success('Booking request sent successfully!');
                 router.push('/dashboard/bookings');
             } else {
+                console.error('Booking failed:', data);
                 toast.error(data.error || 'Failed to submit booking');
             }
         } catch (error) {
@@ -179,11 +217,16 @@ export default function ServiceDetailsPage() {
                         </div>
                         <div className="p-8">
                             <h1 className="text-3xl font-bold text-gray-900 mb-2">{pkg.title}</h1>
-                            <div className="flex items-center gap-4 text-gray-500 text-sm mb-6">
+                            <div className="flex items-center gap-4 text-gray-500 text-sm mb-6 flex-wrap">
                                 <div className="flex items-center"><Clock className="w-4 h-4 mr-1" /> {pkg.duration} Hours</div>
                                 <div className="flex items-center items-center gap-1 text-orange-600">
                                     <Star className="w-4 h-4 fill-current" /> {pkg.vendor.rating.toFixed(1)}
                                 </div>
+                                {pkg.location && (
+                                    <div className="flex items-center">
+                                        <MapPin className="w-4 h-4 mr-1" /> {pkg.location}
+                                    </div>
+                                )}
                             </div>
 
                             <p className="text-gray-600 leading-relaxed mb-8">{pkg.description}</p>
@@ -201,6 +244,19 @@ export default function ServiceDetailsPage() {
                             </div>
                         </div>
                     </div>
+
+                    {pkg.gallery && pkg.gallery.length > 0 && (
+                        <div className="space-y-3 mt-8">
+                            <h3 className="font-bold text-gray-900">Gallery</h3>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                {pkg.gallery.map((img, i) => (
+                                    <div key={i} className="aspect-square rounded-xl overflow-hidden bg-gray-100">
+                                        <img src={img} alt={`Gallery ${i + 1}`} className="w-full h-full object-cover hover:scale-105 transition-transform" />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Vendor Info Component could go here */}
                     <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-4">
@@ -238,7 +294,7 @@ export default function ServiceDetailsPage() {
                                         required
                                         value={eventDate}
                                         onChange={(e) => setEventDate(e.target.value)}
-                                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none"
+                                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none text-black"
                                     />
                                 </div>
                                 <div>
@@ -248,7 +304,7 @@ export default function ServiceDetailsPage() {
                                         required
                                         value={eventTime}
                                         onChange={(e) => setEventTime(e.target.value)}
-                                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none"
+                                        className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none text-black"
                                     />
                                 </div>
                             </div>
@@ -263,7 +319,7 @@ export default function ServiceDetailsPage() {
                                         placeholder="Full address or venue name"
                                         value={location}
                                         onChange={(e) => setLocation(e.target.value)}
-                                        className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none"
+                                        className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none text-black"
                                     />
                                 </div>
                             </div>
@@ -276,7 +332,7 @@ export default function ServiceDetailsPage() {
                                     placeholder="e.g. 100"
                                     value={guests}
                                     onChange={(e) => setGuests(e.target.value)}
-                                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none"
+                                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none text-black"
                                 />
                             </div>
 
@@ -288,7 +344,7 @@ export default function ServiceDetailsPage() {
                                     placeholder="Please describe your event and any specific requirements effectively..."
                                     value={description}
                                     onChange={(e) => setDescription(e.target.value)}
-                                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none resize-none"
+                                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-200 focus:outline-none text-black resize-none"
                                 />
                                 <p className="text-xs text-gray-400 mt-1">Provide clear details to help the vendor understand your needs.</p>
                             </div>

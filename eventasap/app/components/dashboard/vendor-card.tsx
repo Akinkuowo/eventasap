@@ -29,11 +29,22 @@ interface VendorCardProps {
             lastName: string;
             avatarUrl: string | null;
         };
+        servicePackages?: {
+            id: string;
+            title: string;
+            price: number;
+            currency: string;
+            duration: number;
+            mainImage: string | null;
+        }[];
     };
 }
 
 export default function VendorCard({ vendor }: VendorCardProps) {
-    const mainImage = vendor.portfolioImages?.[0] || 'https://images.unsplash.com/photo-1511795409834-ef04bbd61622?q=80&w=1469&auto=format&fit=crop';
+    // Prioritize service package images, then portfolio images, then default
+    const mainImage = vendor.servicePackages?.[0]?.mainImage
+        || vendor.portfolioImages?.[0]
+        || 'https://images.unsplash.com/photo-1511795409834-ef04bbd61622?q=80&w=1469&auto=format&fit=crop';
 
     return (
         <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-xl transition-all duration-300 group flex flex-col h-full">
@@ -82,9 +93,37 @@ export default function VendorCard({ vendor }: VendorCardProps) {
                     {vendor.city}, {vendor.country}
                 </div>
 
-                <p className="text-gray-600 text-sm line-clamp-2 mb-4 flex-1">
+                <p className="text-gray-600 text-sm line-clamp-2 mb-4">
                     {vendor.description || `Meet ${vendor.user.firstName} ${vendor.user.lastName}, a professional ${vendor.category} ready to make your event unforgettable.`}
                 </p>
+
+                {/* Packages Section */}
+                {vendor.servicePackages && vendor.servicePackages.length > 0 && (
+                    <div className="mb-4 space-y-2">
+                        <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Service Packages</h4>
+                        <div className="space-y-1.5">
+                            {vendor.servicePackages.map((pkg) => (
+                                <button
+                                    key={pkg.id}
+                                    onClick={() => window.location.href = `/dashboard/services/${pkg.id}`}
+                                    className="w-full flex items-center justify-between p-2 bg-gray-50 hover:bg-orange-50 rounded-lg transition-colors group/pkg text-left"
+                                >
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-semibold text-gray-900 truncate group-hover/pkg:text-orange-600">
+                                            {pkg.title}
+                                        </p>
+                                        <p className="text-xs text-gray-500">
+                                            {pkg.duration} hours
+                                        </p>
+                                    </div>
+                                    <div className="text-sm font-bold text-orange-600 ml-2">
+                                        £{pkg.price}
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3 pt-4 border-t border-gray-50 mb-4">
                     <div className="flex items-center text-[11px] text-gray-500">

@@ -125,7 +125,7 @@ export default function ForClient() {
                         placeholder="What service are you looking for?"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-12 pr-10 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:bg-white transition-all"
+                        className="w-full pl-12 pr-10 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:bg-white transition-all text-black"
                     />
                 </div>
                 <div className="flex gap-4 overflow-x-auto pb-1 scrollbar-none">

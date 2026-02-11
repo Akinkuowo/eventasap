@@ -424,13 +424,13 @@ const optionalAuthenticate = async (request, reply) => {
 
 async function start() {
   // Register plugins
- await app.register(cors, {
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Content-Type', 'Authorization']
-});
+  await app.register(cors, {
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: ['Content-Type', 'Authorization']
+  });
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
@@ -1147,168 +1147,168 @@ async function start() {
   });
 
   // Update vendor profile details (including business proof)
- app.put("/api/vendor/profile", { preHandler: [authenticate] }, async (request, reply) => {
-  try {
-    const userId = request.user.userId;
-    
-    // Add CORS headers explicitly
-    reply.header('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'http://localhost:3000');
-    reply.header('Access-Control-Allow-Credentials', 'true');
-    
-    const data = vendorProfileUpdateSchema.parse(request.body);
+  app.put("/api/vendor/profile", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
 
-    const userProfile = await prisma.vendorProfile.findUnique({
-      where: { userId }
-    });
+      // Add CORS headers explicitly
+      reply.header('Access-Control-Allow-Origin', process.env.FRONTEND_URL || 'http://localhost:3000');
+      reply.header('Access-Control-Allow-Credentials', 'true');
 
-    if (!userProfile) {
-      return reply.status(404).send({
-        success: false,
-        error: 'Vendor profile not found'
+      const data = vendorProfileUpdateSchema.parse(request.body);
+
+      const userProfile = await prisma.vendorProfile.findUnique({
+        where: { userId }
       });
-    }
 
-    // Prepare update data
-    let updateData = {
-      ...data,
-      updatedAt: new Date()
-    };
-
-    // Remove businessProof from updateData initially
-    delete updateData.businessProof;
-
-    // Handle business proof document upload
-    if (data.businessProof && data.businessProof.startsWith('data:')) {
-      try {
-        // Ensure upload directory exists
-        const uploadDir = path.join(__dirname, 'proof-of-document');
-        try {
-          await fs.access(uploadDir);
-        } catch {
-          await fs.mkdir(uploadDir, { recursive: true });
-          app.log.info('Created proof-of-document directory');
-        }
-
-        // Extract base64 data
-        const matches = data.businessProof.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-
-        if (matches && matches.length === 3) {
-          const mimeType = matches[1];
-          const base64Data = matches[2];
-          
-          // Validate base64 string length before converting
-          if (base64Data.length > 15 * 1024 * 1024) { // ~15MB base64 = ~10MB file
-            return reply.status(400).send({
-              success: false,
-              error: 'File size exceeds 10MB limit'
-            });
-          }
-          
-          const buffer = Buffer.from(base64Data, 'base64');
-
-          // Validate file size (10MB limit)
-          if (buffer.length > 10 * 1024 * 1024) {
-            return reply.status(400).send({
-              success: false,
-              error: 'File size exceeds 10MB limit'
-            });
-          }
-
-          // Determine file extension
-          const extensionMap = {
-            'image/png': 'png',
-            'image/jpeg': 'jpg',
-            'image/jpg': 'jpg',
-            'application/pdf': 'pdf',
-            'image/webp': 'webp'
-          };
-          const extension = extensionMap[mimeType] || 'bin';
-
-          // Validate file type
-          if (!['png', 'jpg', 'jpeg', 'pdf', 'webp'].includes(extension)) {
-            return reply.status(400).send({
-              success: false,
-              error: 'Invalid file type. Only PNG, JPG, PDF, and WEBP are allowed'
-            });
-          }
-
-          // Generate unique filename
-          const timestamp = Date.now();
-          const randomString = crypto.randomBytes(8).toString('hex');
-          const filename = `proof-${userId}-${timestamp}-${randomString}.${extension}`;
-          const filepath = path.join(uploadDir, filename);
-
-          // Save file
-          await fs.writeFile(filepath, buffer);
-          app.log.info(`Business proof document saved: ${filename}`);
-
-          // Delete old proof file if exists
-          if (userProfile.businessProof) {
-            const oldFilePath = path.join(uploadDir, userProfile.businessProof);
-            try {
-              await fs.unlink(oldFilePath);
-              app.log.info(`Old business proof deleted: ${userProfile.businessProof}`);
-            } catch (unlinkError) {
-              app.log.warn(`Could not delete old proof file: ${userProfile.businessProof}`);
-            }
-          }
-
-          // Update data with new filename and reset approval status
-          updateData.businessProof = filename;
-          updateData.status = 'PENDING';
-          updateData.isVerified = false;
-
-        } else {
-          return reply.status(400).send({
-            success: false,
-            error: 'Invalid base64 format'
-          });
-        }
-      } catch (fileError) {
-        app.log.error('File saving error:', fileError);
-        return reply.status(500).send({
+      if (!userProfile) {
+        return reply.status(404).send({
           success: false,
-          error: 'Failed to save business proof document',
-          details: process.env.NODE_ENV === 'development' ? fileError.message : undefined
+          error: 'Vendor profile not found'
         });
       }
-    }
 
-    const updatedProfile = await prisma.vendorProfile.update({
-      where: { id: userProfile.id },
-      data: updateData
-    });
+      // Prepare update data
+      let updateData = {
+        ...data,
+        updatedAt: new Date()
+      };
 
-    return reply.send({
-      success: true,
-      message: updateData.businessProof 
-        ? 'Vendor profile updated successfully. Your business proof is pending approval.' 
-        : 'Vendor profile updated successfully',
-      data: { 
-        vendorProfile: {
-          ...updatedProfile,
-          businessProofUrl: updatedProfile.businessProof 
-            ? `/uploads/proofs/${updatedProfile.businessProof}`
-            : null
+      // Remove businessProof from updateData initially
+      delete updateData.businessProof;
+
+      // Handle business proof document upload
+      if (data.businessProof && data.businessProof.startsWith('data:')) {
+        try {
+          // Ensure upload directory exists
+          const uploadDir = path.join(__dirname, 'proof-of-document');
+          try {
+            await fs.access(uploadDir);
+          } catch {
+            await fs.mkdir(uploadDir, { recursive: true });
+            app.log.info('Created proof-of-document directory');
+          }
+
+          // Extract base64 data
+          const matches = data.businessProof.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+
+          if (matches && matches.length === 3) {
+            const mimeType = matches[1];
+            const base64Data = matches[2];
+
+            // Validate base64 string length before converting
+            if (base64Data.length > 15 * 1024 * 1024) { // ~15MB base64 = ~10MB file
+              return reply.status(400).send({
+                success: false,
+                error: 'File size exceeds 10MB limit'
+              });
+            }
+
+            const buffer = Buffer.from(base64Data, 'base64');
+
+            // Validate file size (10MB limit)
+            if (buffer.length > 10 * 1024 * 1024) {
+              return reply.status(400).send({
+                success: false,
+                error: 'File size exceeds 10MB limit'
+              });
+            }
+
+            // Determine file extension
+            const extensionMap = {
+              'image/png': 'png',
+              'image/jpeg': 'jpg',
+              'image/jpg': 'jpg',
+              'application/pdf': 'pdf',
+              'image/webp': 'webp'
+            };
+            const extension = extensionMap[mimeType] || 'bin';
+
+            // Validate file type
+            if (!['png', 'jpg', 'jpeg', 'pdf', 'webp'].includes(extension)) {
+              return reply.status(400).send({
+                success: false,
+                error: 'Invalid file type. Only PNG, JPG, PDF, and WEBP are allowed'
+              });
+            }
+
+            // Generate unique filename
+            const timestamp = Date.now();
+            const randomString = crypto.randomBytes(8).toString('hex');
+            const filename = `proof-${userId}-${timestamp}-${randomString}.${extension}`;
+            const filepath = path.join(uploadDir, filename);
+
+            // Save file
+            await fs.writeFile(filepath, buffer);
+            app.log.info(`Business proof document saved: ${filename}`);
+
+            // Delete old proof file if exists
+            if (userProfile.businessProof) {
+              const oldFilePath = path.join(uploadDir, userProfile.businessProof);
+              try {
+                await fs.unlink(oldFilePath);
+                app.log.info(`Old business proof deleted: ${userProfile.businessProof}`);
+              } catch (unlinkError) {
+                app.log.warn(`Could not delete old proof file: ${userProfile.businessProof}`);
+              }
+            }
+
+            // Update data with new filename and reset approval status
+            updateData.businessProof = filename;
+            updateData.status = 'PENDING';
+            updateData.isVerified = false;
+
+          } else {
+            return reply.status(400).send({
+              success: false,
+              error: 'Invalid base64 format'
+            });
+          }
+        } catch (fileError) {
+          app.log.error('File saving error:', fileError);
+          return reply.status(500).send({
+            success: false,
+            error: 'Failed to save business proof document',
+            details: process.env.NODE_ENV === 'development' ? fileError.message : undefined
+          });
         }
       }
-    });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return reply.status(400).send({
+
+      const updatedProfile = await prisma.vendorProfile.update({
+        where: { id: userProfile.id },
+        data: updateData
+      });
+
+      return reply.send({
+        success: true,
+        message: updateData.businessProof
+          ? 'Vendor profile updated successfully. Your business proof is pending approval.'
+          : 'Vendor profile updated successfully',
+        data: {
+          vendorProfile: {
+            ...updatedProfile,
+            businessProofUrl: updatedProfile.businessProof
+              ? `/uploads/proofs/${updatedProfile.businessProof}`
+              : null
+          }
+        }
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      app.log.error('Update vendor profile error:', error);
+      return reply.status(500).send({
         success: false,
-        error: 'Validation failed',
-        details: error.errors
+        error: 'Internal server error',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
-    app.log.error('Update vendor profile error:', error);
-    return reply.status(500).send({ 
-      success: false, 
-      error: 'Internal server error',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
+  });
 
   // Update user preferences
   app.put("/api/user/update-preferences", { preHandler: [authenticate] }, async (request, reply) => {
@@ -1346,7 +1346,7 @@ async function start() {
   app.get("/api/admin/vendors/pending", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
-      
+
       // Check if user is admin
       const user = await prisma.user.findUnique({
         where: { id: userId }
@@ -1421,7 +1421,7 @@ async function start() {
   app.get("/api/admin/vendors/all", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
-      
+
       const user = await prisma.user.findUnique({
         where: { id: userId }
       });
@@ -1896,6 +1896,9 @@ async function start() {
   app.post("/api/bookings", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
+
+      console.log('Received booking data:', request.body);  // Debug log
+
       const data = bookingSchema.parse(request.body);
 
       const user = await prisma.user.findUnique({
@@ -1978,19 +1981,28 @@ async function start() {
 
     } catch (error) {
       if (error instanceof z.ZodError) {
+        console.log('Zod Validation Error:', {
+          name: error.name,
+          errors: error.errors,
+          issues: error.issues,
+          format: error.format()
+        });
+
         return reply.status(400).send({
           success: false,
           error: 'Validation failed',
           details: error.errors.map(err => ({
             field: err.path.join('.'),
-            message: err.message
+            message: err.message,
+            code: err.code
           }))
         });
       }
       app.log.error('Create booking error:', error);
       return reply.status(500).send({
         success: false,
-        error: 'Internal server error'
+        error: 'Internal server error',
+        message: error.message
       });
     }
   });
@@ -2592,6 +2604,58 @@ async function start() {
     }
   });
 
+  // Get single package by ID (public) - MUST BE BEFORE /api/packages route
+  app.get("/api/packages/:id", async (request, reply) => {
+    try {
+      const { id } = request.params;
+
+      const pkg = await prisma.servicePackage.findUnique({
+        where: {
+          id,
+          isActive: true
+        },
+        include: {
+          vendor: {
+            select: {
+              id: true,
+              userId: true,  // IMPORTANT: Include this
+              businessName: true,
+              category: true,
+              rating: true,
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  avatarUrl: true
+                }
+              }
+            }
+          }
+        }
+      });
+
+      if (!pkg) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Package not found'
+        });
+      }
+
+      return reply.send({
+        success: true,
+        data: pkg
+      });
+
+    } catch (error) {
+      app.log.error('Get package error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
   // Get all packages (public)
   app.get("/api/packages", async (request, reply) => {
     try {
@@ -2633,11 +2697,13 @@ async function start() {
             vendor: {
               select: {
                 id: true,
+                userId: true,  // ADD THIS
                 businessName: true,
                 category: true,
                 rating: true,
                 user: {
                   select: {
+                    id: true,
                     firstName: true,
                     lastName: true,
                     avatarUrl: true
@@ -2716,9 +2782,11 @@ async function start() {
       }
 
       if (onlyBooked === 'true' && currentUserId) {
-        whereClause.bookings = {
-          some: {
-            clientId: currentUserId
+        whereClause.user = {
+          bookings: {
+            some: {
+              clientId: currentUserId
+            }
           }
         };
       }
@@ -2749,6 +2817,19 @@ async function start() {
                 lastName: true,
                 avatarUrl: true
               }
+            },
+            servicePackages: {
+              where: { isActive: true },
+              select: {
+                id: true,
+                title: true,
+                price: true,
+                currency: true,
+                duration: true,
+                mainImage: true
+              },
+              take: 3,
+              orderBy: { price: 'asc' }
             }
           },
           orderBy: { rating: 'desc' }
@@ -2777,6 +2858,66 @@ async function start() {
       });
     }
   });
+
+  // Get single vendor by ID
+  app.get("/api/vendors/:id", async (request, reply) => {
+    try {
+      const { id } = request.params;
+
+      const vendor = await prisma.vendorProfile.findUnique({
+        where: { id },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneNumber: true,
+              avatarUrl: true
+            }
+          },
+          servicePackages: {
+            where: { isActive: true },
+            orderBy: { price: 'asc' }
+          },
+          reviews: {
+            include: {
+              client: {
+                select: {
+                  firstName: true,
+                  lastName: true,
+                  avatarUrl: true
+                }
+              }
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 10
+          }
+        }
+      });
+
+      if (!vendor) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Vendor not found'
+        });
+      }
+
+      return reply.send({
+        success: true,
+        data: vendor
+      });
+
+    } catch (error) {
+      app.log.error('Get vendor error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
 
   // Create service request
   app.post("/api/service-requests", { preHandler: [authenticate] }, async (request, reply) => {
