@@ -13,6 +13,7 @@ import {
 interface VendorCardProps {
     vendor: {
         id: string;
+        userId: string;
         businessName: string;
         category: string;
         city: string;
@@ -145,7 +146,7 @@ export default function VendorCard({ vendor }: VendorCardProps) {
                         <ArrowRight className="w-4 h-4 ml-2 group-hover/btn:translate-x-1 transition-transform" />
                     </button>
                     <button
-                        onClick={() => window.location.href = `/dashboard/bookings/new?vendor=${vendor.id}`}
+                        onClick={() => window.location.href = `/dashboard/bookings/new?vendor=${vendor.userId}`}
                         className="p-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-orange-50 hover:border-orange-200 hover:text-orange-600 transition-all"
                         title="Quick Book"
                     >

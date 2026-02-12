@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Calendar,
@@ -39,6 +39,7 @@ export default function BookingRequestForm({
     const serviceId = propServiceId || searchParams.get('service') || '';
 
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [actualVendorUserId, setActualVendorUserId] = useState(vendorId);
     const [formData, setFormData] = useState({
         vendorId,
         serviceId,
@@ -51,6 +52,27 @@ export default function BookingRequestForm({
         customRequirements: [] as string[]
     });
     const [customRequirement, setCustomRequirement] = useState('');
+
+    useEffect(() => {
+
+        const fetchVendorUserId = async () => {
+            if (vendorId) {
+            try {
+                // Try to fetch vendor details to get the userId
+                const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/vendors/${vendorId}`);
+                if (response.ok) {
+                const data = await response.json();
+                if (data.success && data.data.userId) {
+                    setActualVendorUserId(data.data.userId);
+                }
+                }
+            } catch (error) {
+                console.error('Error fetching vendor details:', error);
+            }
+            }
+        };
+        fetchVendorUserId();
+    }, [vendorId]);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -164,7 +186,7 @@ export default function BookingRequestForm({
                         value={formData.serviceType}
                         onChange={handleInputChange}
                         required
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-500 transition-all"
+                        className="w-full px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                     >
                         <option value="">Select a service type</option>
                         <option value="Photography">Photography</option>
@@ -193,7 +215,7 @@ export default function BookingRequestForm({
                         onChange={handleInputChange}
                         min={new Date().toISOString().split('T')[0]}
                         required
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-500 transition-all"
+                        className="w-full px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                     />
                 </div>
 
@@ -211,7 +233,7 @@ export default function BookingRequestForm({
                         onChange={handleInputChange}
                         placeholder="Enter event location"
                         required
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-500 transition-all"
+                        className="w-full px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                     />
                 </div>
 
@@ -229,7 +251,7 @@ export default function BookingRequestForm({
                         onChange={handleInputChange}
                         min="1"
                         required
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-500 transition-all"
+                        className="w-full px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                     />
                 </div>
 
@@ -249,7 +271,7 @@ export default function BookingRequestForm({
                         step="0.01"
                         placeholder="Enter your budget"
                         required
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-500 transition-all"
+                        className="w-full px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                     />
                 </div>
 
@@ -266,7 +288,7 @@ export default function BookingRequestForm({
                         onChange={handleInputChange}
                         rows={4}
                         placeholder="Tell the vendor more about your event..."
-                        className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-500 transition-all resize-none"
+                        className="w-full px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all resize-none text-black"
                     />
                 </div>
 
@@ -282,7 +304,7 @@ export default function BookingRequestForm({
                             onChange={(e) => setCustomRequirement(e.target.value)}
                             onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addCustomRequirement())}
                             placeholder="Add a custom requirement"
-                            className="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-500 transition-all"
+                            className="flex-1 px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                         />
                         <button
                             type="button"

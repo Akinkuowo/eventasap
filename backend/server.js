@@ -1897,7 +1897,7 @@ async function start() {
     try {
       const userId = request.user.userId;
 
-      console.log('Received booking data:', request.body);  // Debug log
+      console.log('Received booking data:', request.body);
 
       const data = bookingSchema.parse(request.body);
 
@@ -1913,23 +1913,39 @@ async function start() {
         });
       }
 
-      const vendor = await prisma.user.findUnique({
+      // FIX: vendorId could be either user.id or vendorProfile.id
+      // Try to find vendor by profile ID first, then by user ID
+      let vendorProfile = await prisma.vendorProfile.findUnique({
         where: { id: data.vendorId },
-        include: { vendorProfile: true }
+        include: { user: true }
       });
 
-      if (!vendor || !vendor.vendorProfile) {
+      // If not found, try finding by userId
+      if (!vendorProfile) {
+        vendorProfile = await prisma.vendorProfile.findUnique({
+          where: { userId: data.vendorId },
+          include: { user: true }
+        });
+      }
+
+      if (!vendorProfile) {
         return reply.status(404).send({
           success: false,
           error: 'Vendor not found'
         });
       }
 
+      // Use the actual user.id for the booking
+      const actualVendorUserId = vendorProfile.userId;
+
+      // Handle empty serviceId to avoid Foreign Key constraint violation
+      const serviceId = data.serviceId === '' ? undefined : data.serviceId;
+
       const booking = await prisma.booking.create({
         data: {
           clientId: userId,
-          vendorId: data.vendorId,
-          serviceId: data.serviceId,
+          vendorId: actualVendorUserId, // Use user.id, not vendorProfile.id
+          serviceId: serviceId,
           serviceType: data.serviceType,
           eventDate: new Date(data.eventDate),
           eventLocation: data.eventLocation,
@@ -1965,7 +1981,7 @@ async function start() {
 
       await prisma.notification.create({
         data: {
-          userId: data.vendorId,
+          userId: actualVendorUserId, // Use user.id here too
           type: 'NEW_BOOKING',
           title: 'New Booking Request',
           message: `${user.firstName} ${user.lastName} has requested a booking for ${data.serviceType}`,
@@ -1998,7 +2014,15 @@ async function start() {
           }))
         });
       }
-      app.log.error('Create booking error:', error);
+
+      // Enhanced error logging
+      app.log.error('Create booking error details:', {
+        message: error.message,
+        code: error.code,
+        meta: error.meta,
+        stack: error.stack
+      });
+
       return reply.status(500).send({
         success: false,
         error: 'Internal server error',
@@ -2096,6 +2120,259 @@ async function start() {
     }
   });
 
+  // Message schemas
+  const sendMessageSchema = z.object({
+    receiverId: z.string(), // This is the userId of the recipient
+    content: z.string().min(1, "Message cannot be empty"),
+    bookingId: z.string().optional()
+  });
+
+  // Send a message
+  app.post("/api/messages", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const { userId } = request.user;
+      const data = sendMessageSchema.parse(request.body);
+
+      if (userId === data.receiverId) {
+        return reply.status(400).send({
+          success: false,
+          error: "You cannot send a message to yourself"
+        });
+      }
+
+      // Check if receiver exists
+      const receiver = await prisma.user.findUnique({
+        where: { id: data.receiverId }
+      });
+
+      if (!receiver) {
+        return reply.status(404).send({
+          success: false,
+          error: "Recipient not found"
+        });
+      }
+
+      // Find or create conversation
+      // We need to check both combinations of participants
+      let conversation = await prisma.conversation.findFirst({
+        where: {
+          OR: [
+            { participant1Id: userId, participant2Id: data.receiverId },
+            { participant1Id: data.receiverId, participant2Id: userId }
+          ]
+        }
+      });
+
+      if (!conversation) {
+        conversation = await prisma.conversation.create({
+          data: {
+            participant1Id: userId,
+            participant2Id: data.receiverId,
+            bookingId: data.bookingId
+          }
+        });
+      }
+
+      // Create message
+      const message = await prisma.message.create({
+        data: {
+          senderId: userId,
+          receiverId: data.receiverId,
+          conversationId: conversation.id,
+          content: data.content,
+          bookingId: data.bookingId
+        }
+      });
+
+      // Update conversation with last message
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          lastMessageId: message.id,
+          lastActivityAt: new Date(),
+          unreadCount: { increment: 1 }
+        }
+      });
+
+      // Create notification for receiver
+      const sender = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true }
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId: data.receiverId,
+          type: 'NEW_MESSAGE',
+          title: 'New Message',
+          message: `You have a new message from ${sender.firstName} ${sender.lastName}`,
+          data: {
+            conversationId: conversation.id,
+            messageId: message.id,
+            senderId: userId
+          }
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: "Message sent successfully",
+        data: { message }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      app.log.error('Send message error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get conversations for current user
+  app.get("/api/conversations", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const { userId } = request.user;
+
+      const conversations = await prisma.conversation.findMany({
+        where: {
+          OR: [
+            { participant1Id: userId },
+            { participant2Id: userId }
+          ]
+        },
+        include: {
+          participant1: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatarUrl: true
+            }
+          },
+          participant2: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatarUrl: true
+            }
+          },
+          lastMessage: true
+        },
+        orderBy: {
+          lastActivityAt: 'desc'
+        }
+      });
+
+      // Format conversations to identify the "other" participant
+      const formattedConversations = conversations.map(conv => {
+        const otherParticipant = conv.participant1Id === userId ? conv.participant2 : conv.participant1;
+        return {
+          ...conv,
+          otherParticipant
+        };
+      });
+
+      return reply.send({
+        success: true,
+        data: { conversations: formattedConversations }
+      });
+
+    } catch (error) {
+      app.log.error('Get conversations error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get messages for a conversation
+  app.get("/api/conversations/:id/messages", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const { userId } = request.user;
+      const { id } = request.params;
+
+      const conversation = await prisma.conversation.findUnique({
+        where: { id },
+        include: {
+          participant1: {
+            select: { id: true, firstName: true, lastName: true }
+          },
+          participant2: {
+            select: { id: true, firstName: true, lastName: true }
+          }
+        }
+      });
+
+      if (!conversation) {
+        return reply.status(404).send({
+          success: false,
+          error: "Conversation not found"
+        });
+      }
+
+      // Check authorization
+      if (conversation.participant1Id !== userId && conversation.participant2Id !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: "Not authorized to view this conversation"
+        });
+      }
+
+      const messages = await prisma.message.findMany({
+        where: { conversationId: id },
+        orderBy: { createdAt: 'asc' },
+        include: {
+          sender: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatarUrl: true
+            }
+          }
+        }
+      });
+
+      // Mark conversation as read if viewing
+      // Logic could be refined to only mark if last message was from other user
+      if (conversation.lastMessageId) {
+        // Reset unread count if needed, or implement read receipts
+        // For now, simpler approach:
+        /* 
+        await prisma.conversation.update({
+           where: { id },
+           data: { unreadCount: 0 }
+        });
+        */
+      }
+
+      return reply.send({
+        success: true,
+        data: {
+          conversation,
+          messages
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get messages error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
   // Get single booking
   app.get("/api/bookings/:id", { preHandler: [authenticate] }, async (request, reply) => {
     try {
@@ -2128,7 +2405,7 @@ async function start() {
           payments: {
             orderBy: { createdAt: 'desc' }
           },
-          reviews: true
+          review: true
         }
       });
 
@@ -2139,11 +2416,24 @@ async function start() {
         });
       }
 
-      if (booking.clientId !== userId && booking.vendorId !== userId) {
-        return reply.status(403).send({
-          success: false,
-          error: 'Not authorized to view this booking'
+      // Check authorization - allow if user is either client or vendor
+      // Need to handle cases where vendorId refers to VendorProfile or User
+      const isClient = booking.clientId === userId;
+      const isVendor = booking.vendorId === userId;
+
+      if (!isClient && !isVendor) {
+        // Double check if userId belongs to the vendor profile
+        const vendorProfile = await prisma.vendorProfile.findUnique({
+          where: { userId },
+          select: { id: true }
         });
+
+        if (!vendorProfile || booking.vendorProfileId !== vendorProfile.id) {
+          return reply.status(403).send({
+            success: false,
+            error: 'Not authorized to view this booking'
+          });
+        }
       }
 
       return reply.send({
@@ -2152,10 +2442,17 @@ async function start() {
       });
 
     } catch (error) {
-      app.log.error('Get booking error:', error);
+      app.log.error('Get booking error details:', {
+        message: error.message,
+        code: error.code,
+        meta: error.meta,
+        stack: error.stack
+      });
+
       return reply.status(500).send({
         success: false,
-        error: 'Internal server error'
+        error: 'Internal server error',
+        message: error.message
       });
     }
   });
@@ -2800,6 +3097,7 @@ async function start() {
           take: parseInt(limit),
           select: {
             id: true,
+            userId: true,
             businessName: true,
             category: true,
             city: true,

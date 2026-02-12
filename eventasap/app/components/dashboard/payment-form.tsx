@@ -125,7 +125,7 @@ export default function PaymentForm({ bookingId, amount, vendorName, serviceType
                             value={formData.name}
                             onChange={handleInputChange}
                             placeholder="Full name as on card"
-                            className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300 transition-all"
+                            className="w-full px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                         />
                     </div>
 
@@ -139,7 +139,7 @@ export default function PaymentForm({ bookingId, amount, vendorName, serviceType
                                 value={formData.cardNumber}
                                 onChange={handleInputChange}
                                 placeholder="0000 0000 0000 0000"
-                                className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300 transition-all"
+                                className="w-full pl-10 pr-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                             />
                         </div>
                     </div>
@@ -153,7 +153,7 @@ export default function PaymentForm({ bookingId, amount, vendorName, serviceType
                                 value={formData.expiry}
                                 onChange={handleInputChange}
                                 placeholder="MM/YY"
-                                className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300 transition-all"
+                                className="w-full px-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                             />
                         </div>
                         <div>
@@ -166,7 +166,7 @@ export default function PaymentForm({ bookingId, amount, vendorName, serviceType
                                     value={formData.cvc}
                                     onChange={handleInputChange}
                                     placeholder="000"
-                                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-orange-200 focus:border-orange-300 transition-all"
+                                    className="w-full pl-10 pr-4 py-3 border border-black rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-200 focus:border-black transition-all text-black"
                                 />
                             </div>
                         </div>

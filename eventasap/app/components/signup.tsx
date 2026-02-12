@@ -1027,7 +1027,7 @@ const UnifiedRegistration = () => {
                                                     <div className="relative">
                                                         <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                                                         {isLoadingStates ? (
-                                                            <div className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl bg-gray-50 flex items-center">
+                                                            <div className="w-full pl-10 pr-4 py-3 border border-black rounded-xl bg-gray-50 flex items-center">
                                                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                                                                 Loading states...
                                                             </div>
@@ -1061,7 +1061,7 @@ const UnifiedRegistration = () => {
                                                     <div className="relative">
                                                         <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                                                         {isLoadingCities ? (
-                                                            <div className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl bg-gray-50 flex items-center">
+                                                            <div className="w-full pl-10 pr-4 py-3 border border-black rounded-xl bg-gray-50 flex items-center">
                                                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                                                                 Loading cities...
                                                             </div>
