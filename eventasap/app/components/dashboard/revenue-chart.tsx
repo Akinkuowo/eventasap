@@ -2,15 +2,20 @@
 
 import React from 'react';
 
-const RevenueChart: React.FC = () => {
-    // Dummy data for the last 6 months
-    const data = [
-        { month: 'Aug', revenue: 4200 },
-        { month: 'Sep', revenue: 5800 },
-        { month: 'Oct', revenue: 7100 },
-        { month: 'Nov', revenue: 6400 },
-        { month: 'Dec', revenue: 9200 },
-        { month: 'Jan', revenue: 12450 },
+interface RevenueData {
+    month: string;
+    revenue: number;
+}
+
+const RevenueChart: React.FC<{ data?: RevenueData[] }> = ({ data: providedData }) => {
+    // Use provided data or empty array
+    const data = providedData && providedData.length > 0 ? providedData : [
+        { month: 'Aug', revenue: 0 },
+        { month: 'Sep', revenue: 0 },
+        { month: 'Oct', revenue: 0 },
+        { month: 'Nov', revenue: 0 },
+        { month: 'Dec', revenue: 0 },
+        { month: 'Jan', revenue: 0 },
     ];
 
     const maxRevenue = Math.max(...data.map(d => d.revenue));

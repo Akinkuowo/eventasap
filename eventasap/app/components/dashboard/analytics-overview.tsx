@@ -41,20 +41,26 @@ const StatCard: React.FC<StatProps> = ({ title, value, change, isPositive, icon:
     </div>
 );
 
-const AnalyticsOverview: React.FC = () => {
-    // These would eventually come from an API
+export interface AnalyticsData {
+    totalRevenue: number;
+    totalBookings: number;
+    avgBookingValue: number;
+    clientBase: number;
+}
+
+const AnalyticsOverview: React.FC<{ data?: AnalyticsData }> = ({ data }) => {
     const stats = [
         {
             title: "Total Revenue",
-            value: "£12,450.00",
-            change: "+12.5%",
+            value: data ? `£${data.totalRevenue.toLocaleString()}` : "£0.00",
+            change: "+12.5%", // Placeholder for now, requires historical data comparison
             isPositive: true,
             icon: DollarSign,
             color: "bg-orange-500"
         },
         {
             title: "Bookings",
-            value: "48",
+            value: data ? data.totalBookings.toString() : "0",
             change: "+8.2%",
             isPositive: true,
             icon: Calendar,
@@ -62,7 +68,7 @@ const AnalyticsOverview: React.FC = () => {
         },
         {
             title: "Avg. Booking",
-            value: "£259.37",
+            value: data ? `£${data.avgBookingValue.toFixed(2)}` : "£0.00",
             change: "-2.4%",
             isPositive: false,
             icon: Activity,
@@ -70,7 +76,7 @@ const AnalyticsOverview: React.FC = () => {
         },
         {
             title: "Client Base",
-            value: "156",
+            value: data ? data.clientBase.toString() : "0",
             change: "+14.1%",
             isPositive: true,
             icon: Users,

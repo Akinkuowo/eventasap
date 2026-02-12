@@ -57,6 +57,18 @@ enum ProposalStatus {
   WITHDRAWN
 }
 
+enum ApprovalStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+enum PayoutStatus {
+  HELD
+  RELEASED_TO_VENDOR
+  COMPLETED
+}
+
 model User {
   id                  String        @id @default(cuid())
   email               String        @unique
@@ -235,6 +247,9 @@ model Booking {
   commissionAmount    Float?
   serviceRequestId    String?
   proposalId          String?       @unique
+  adjustedPrice       Float?
+  priceAdjustmentReason String?
+  clientApprovalStatus ApprovalStatus @default(PENDING_APPROVAL)
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
   
@@ -267,6 +282,11 @@ model Payment {
   currency        String        @default("GBP")
   paymentMethod   String
   stripePaymentId String?
+  paypalOrderId   String?
+  paypalPaymentId String?
+  adminFee        Float?
+  vendorPayout    Float?
+  payoutStatus    PayoutStatus @default(HELD)
   status          PaymentStatus @default(PENDING)
   description     String?
   metadata        Json?

@@ -2457,6 +2457,116 @@ async function start() {
     }
   });
 
+  // Get dashboard stats
+  app.get("/api/dashboard/stats", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user) {
+        return reply.status(404).send({ success: false, error: 'User not found' });
+      }
+
+      let stats = {
+        totalRevenue: 0,
+        totalBookings: 0,
+        pendingBookings: 0,
+        completedBookings: 0,
+        averageRating: 0,
+        activeClients: 0, // For vendors
+        activeVendors: 0, // For clients
+        totalSpent: 0 // For clients
+      };
+
+      if (user.activeRole === 'VENDOR') {
+        // Fetch vendor's bookings (bookings have vendorId that references User.id)
+        const bookings = await prisma.booking.findMany({
+          where: { vendorId: userId },
+          include: {
+            payments: true,
+            review: true,
+            client: {
+              select: {
+                firstName: true,
+                lastName: true
+              }
+            },
+            servicePackage: {
+              select: {
+                title: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        });
+
+        stats.totalBookings = bookings.length;
+        stats.pendingBookings = bookings.filter(b => b.status === 'PENDING').length;
+        stats.completedBookings = bookings.filter(b => b.status === 'COMPLETED').length;
+
+        // Calculate revenue from payments
+        stats.totalRevenue = bookings.reduce((sum, b) => {
+          return sum + b.payments.reduce((pSum, p) => p.status === 'PAID' ? pSum + p.amount : pSum, 0);
+        }, 0);
+
+        // Calculate average rating from reviews
+        const reviews = bookings.filter(b => b.review).map(b => b.review);
+        if (reviews.length > 0) {
+          const totalRating = reviews.reduce((sum, r) => sum + r.rating, 0);
+          stats.averageRating = parseFloat((totalRating / reviews.length).toFixed(1));
+        }
+
+        // Calculate active clients (unique clients who have booked)
+        const uniqueClients = new Set(bookings.map(b => b.clientId));
+        stats.activeClients = uniqueClients.size;
+
+        // Get recent bookings (last 5)
+        stats.recentBookings = bookings.slice(0, 5).map(b => ({
+          id: b.id,
+          client: `${b.client.firstName} ${b.client.lastName}`,
+          service: b.servicePackage?.title || b.serviceType || 'Custom Service',
+          date: b.bookingDate,
+          status: b.status,
+          amount: b.payments.reduce((sum, p) => p.status === 'PAID' ? sum + p.amount : sum, 0)
+        }));
+      } else {
+        // Client specific stats
+        const bookings = await prisma.booking.findMany({
+          where: { clientId: userId },
+          include: { payments: true, review: true }
+        });
+
+        stats.totalBookings = bookings.length;
+        stats.pendingBookings = bookings.filter(b => b.status === 'PENDING').length;
+        stats.completedBookings = bookings.filter(b => b.status === 'COMPLETED').length;
+
+        // Calculate total spent
+        stats.totalSpent = bookings.reduce((sum, b) => {
+          return sum + b.payments.reduce((pSum, p) => p.status === 'PAID' ? pSum + p.amount : pSum, 0);
+        }, 0);
+
+        // Active vendors
+        const uniqueVendors = new Set(bookings.map(b => b.vendorId));
+        stats.activeVendors = uniqueVendors.size;
+      }
+
+      return reply.send({
+        success: true,
+        data: stats
+      });
+
+    } catch (error) {
+      app.log.error('Get dashboard stats error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
   // Update booking
   app.put("/api/bookings/:id", { preHandler: [authenticate] }, async (request, reply) => {
     try {
@@ -2523,6 +2633,718 @@ async function start() {
         });
       }
       app.log.error('Update booking error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Helper function to create notifications
+  async function createBookingNotification({ userId, type, title, message, actionUrl, data }) {
+    try {
+      await prisma.notification.create({
+        data: {
+          userId,
+          type,
+          title,
+          message,
+          actionUrl,
+          data
+        }
+      });
+    } catch (error) {
+      app.log.error('Create notification error:', error);
+    }
+  }
+
+  // Vendor adjusts booking price
+  app.put("/api/bookings/:id/adjust-price", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+      const { adjustedPrice, priceAdjustmentReason } = request.body;
+
+      if (!adjustedPrice || adjustedPrice <= 0) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Valid adjusted price is required'
+        });
+      }
+
+      const booking = await prisma.booking.findUnique({
+        where: { id }
+      });
+
+      if (!booking) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Booking not found'
+        });
+      }
+
+      if (booking.vendorId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only the vendor can adjust the price'
+        });
+      }
+
+      const updatedBooking = await prisma.booking.update({
+        where: { id },
+        data: {
+          adjustedPrice,
+          priceAdjustmentReason: priceAdjustmentReason || null,
+          clientApprovalStatus: 'PENDING_APPROVAL',
+          updatedAt: new Date()
+        }
+      });
+
+      // Notify client about price adjustment
+      await createBookingNotification({
+        userId: booking.clientId,
+        type: 'PRICE_ADJUSTED',
+        title: 'Price Adjustment for Your Booking',
+        message: `The vendor has adjusted the price to £${adjustedPrice.toFixed(2)}. ${priceAdjustmentReason ? 'Reason: ' + priceAdjustmentReason : ''}`,
+        actionUrl: `/dashboard/bookings/${id}`,
+        data: { bookingId: id, adjustedPrice, priceAdjustmentReason }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Price adjusted successfully',
+        data: updatedBooking
+      });
+
+    } catch (error) {
+      app.log.error('Adjust price error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Client approves adjusted price
+  app.put("/api/bookings/:id/approve-price", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+
+      const booking = await prisma.booking.findUnique({
+        where: { id }
+      });
+
+      if (!booking) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Booking not found'
+        });
+      }
+
+      if (booking.clientId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only the client can approve the price'
+        });
+      }
+
+      if (!booking.adjustedPrice) {
+        return reply.status(400).send({
+          success: false,
+          error: 'No price adjustment to approve'
+        });
+      }
+
+      const updatedBooking = await prisma.booking.update({
+        where: { id },
+        data: {
+          clientApprovalStatus: 'APPROVED',
+          quotedPrice: booking.adjustedPrice,
+          updatedAt: new Date()
+        }
+      });
+
+      // Notify vendor about approval
+      await createBookingNotification({
+        userId: booking.vendorId,
+        type: 'PRICE_APPROVED',
+        title: 'Client Approved Price Adjustment',
+        message: `The client has approved your adjusted price of £${booking.adjustedPrice.toFixed(2)}`,
+        actionUrl: `/dashboard/bookings/${id}`,
+        data: { bookingId: id, adjustedPrice: booking.adjustedPrice }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Price approved successfully',
+        data: updatedBooking
+      });
+
+    } catch (error) {
+      app.log.error('Approve price error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Client rejects adjusted price
+  app.put("/api/bookings/:id/reject-price", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+      const { rejectionReason } = request.body;
+
+      const booking = await prisma.booking.findUnique({
+        where: { id }
+      });
+
+      if (!booking) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Booking not found'
+        });
+      }
+
+      if (booking.clientId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only the client can reject the price'
+        });
+      }
+
+      if (!booking.adjustedPrice) {
+        return reply.status(400).send({
+          success: false,
+          error: 'No price adjustment to reject'
+        });
+      }
+
+      const updatedBooking = await prisma.booking.update({
+        where: { id },
+        data: {
+          clientApprovalStatus: 'REJECTED',
+          updatedAt: new Date()
+        }
+      });
+
+      // Notify vendor about rejection
+      await createBookingNotification({
+        userId: booking.vendorId,
+        type: 'PRICE_REJECTED',
+        title: 'Client Rejected Price Adjustment',
+        message: `The client has rejected your adjusted price of £${booking.adjustedPrice.toFixed(2)}. ${rejectionReason ? 'Reason: ' + rejectionReason : ''}`,
+        actionUrl: `/dashboard/bookings/${id}`,
+        data: { bookingId: id, adjustedPrice: booking.adjustedPrice, rejectionReason }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Price rejected',
+        data: updatedBooking
+      });
+
+    } catch (error) {
+      app.log.error('Reject price error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Vendor accepts booking
+  app.put("/api/bookings/:id/accept", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+
+      const booking = await prisma.booking.findUnique({
+        where: { id }
+      });
+
+      if (!booking) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Booking not found'
+        });
+      }
+
+      if (booking.vendorId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only the vendor can accept the booking'
+        });
+      }
+
+      const updatedBooking = await prisma.booking.update({
+        where: { id },
+        data: {
+          status: 'CONFIRMED',
+          updatedAt: new Date()
+        }
+      });
+
+      // Notify client with payment link
+      await createBookingNotification({
+        userId: booking.clientId,
+        type: 'BOOKING_ACCEPTED',
+        title: 'Booking Accepted',
+        message: `Your booking has been confirmed. Please proceed with payment to secure your booking.`,
+        actionUrl: `/dashboard/payments/${id}`,
+        data: { bookingId: id, amount: booking.quotedPrice || booking.budget }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Booking accepted successfully',
+        data: updatedBooking
+      });
+
+    } catch (error) {
+      app.log.error('Accept booking error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Vendor declines booking
+  app.put("/api/bookings/:id/decline", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+      const { declineReason } = request.body;
+
+      const booking = await prisma.booking.findUnique({
+        where: { id }
+      });
+
+      if (!booking) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Booking not found'
+        });
+      }
+
+      if (booking.vendorId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only the vendor can decline the booking'
+        });
+      }
+
+      const updatedBooking = await prisma.booking.update({
+        where: { id },
+        data: {
+          status: 'CANCELLED',
+          notes: declineReason || 'Declined by vendor',
+          updatedAt: new Date()
+        }
+      });
+
+      // Notify client about decline
+      await createBookingNotification({
+        userId: booking.clientId,
+        type: 'BOOKING_DECLINED',
+        title: 'Booking Declined',
+        message: `Unfortunately, the vendor has declined your booking. ${declineReason ? 'Reason: ' + declineReason : ''}`,
+        actionUrl: `/dashboard/bookings`,
+        data: { bookingId: id, declineReason }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Booking declined',
+        data: updatedBooking
+      });
+
+    } catch (error) {
+      app.log.error('Decline booking error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get user notifications
+  app.get("/api/notifications", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { page = 1, limit = 20, unreadOnly = false } = request.query;
+
+      const skip = (parseInt(page) - 1) * parseInt(limit);
+      const take = parseInt(limit);
+
+      const where = {
+        userId,
+        ...(unreadOnly === 'true' && { isRead: false })
+      };
+
+      const [notifications, total] = await Promise.all([
+        prisma.notification.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take
+        }),
+        prisma.notification.count({ where })
+      ]);
+
+      const unreadCount = await prisma.notification.count({
+        where: { userId, isRead: false }
+      });
+
+      return reply.send({
+        success: true,
+        data: {
+          notifications,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total,
+            totalPages: Math.ceil(total / parseInt(limit))
+          },
+          unreadCount
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get notifications error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Mark notification as read
+  app.put("/api/notifications/:id/read", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { id } = request.params;
+
+      const notification = await prisma.notification.findUnique({
+        where: { id }
+      });
+
+      if (!notification) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Notification not found'
+        });
+      }
+
+      if (notification.userId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Unauthorized'
+        });
+      }
+
+      const updatedNotification = await prisma.notification.update({
+        where: { id },
+        data: {
+          isRead: true,
+          readAt: new Date()
+        }
+      });
+
+      return reply.send({
+        success: true,
+        data: updatedNotification
+      });
+
+    } catch (error) {
+      app.log.error('Mark notification as read error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Mark all notifications as read
+  app.put("/api/notifications/mark-all-read", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+
+      await prisma.notification.updateMany({
+        where: {
+          userId,
+          isRead: false
+        },
+        data: {
+          isRead: true,
+          readAt: new Date()
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'All notifications marked as read'
+      });
+
+    } catch (error) {
+      app.log.error('Mark all notifications as read error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Create PayPal order for booking payment
+  app.post("/api/payments/create-paypal-order", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { bookingId } = request.body;
+
+      if (!bookingId) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Booking ID is required'
+        });
+      }
+
+      const booking = await prisma.booking.findUnique({
+        where: { id: bookingId },
+        include: {
+          client: true,
+          vendor: true
+        }
+      });
+
+      if (!booking) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Booking not found'
+        });
+      }
+
+      if (booking.clientId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only the client can pay for this booking'
+        });
+      }
+
+      const amount = booking.quotedPrice || booking.budget;
+
+      // Create PayPal order (simplified - you'll need to use the actual PayPal SDK)
+      // For now, we'll create a placeholder payment record
+      const payment = await prisma.payment.create({
+        data: {
+          bookingId,
+          userId,
+          amount,
+          currency: 'GBP',
+          paymentMethod: 'PAYPAL',
+          status: 'PENDING',
+          description: `Payment for booking #${bookingId}`,
+          adminFee: amount * 0.3, // 30% admin fee
+          vendorPayout: amount * 0.7, // 70% to vendor
+          payoutStatus: 'HELD'
+        }
+      });
+
+      // In production, you would create an actual PayPal order here
+      // and return the approval URL
+      const approvalUrl = `https://www.sandbox.paypal.com/checkoutnow?token=MOCK_TOKEN_${payment.id}`;
+
+      return reply.send({
+        success: true,
+        message: 'PayPal order created',
+        data: {
+          paymentId: payment.id,
+          approvalUrl,
+          amount,
+          currency: 'GBP'
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Create PayPal order error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Capture PayPal payment after client approval
+  app.post("/api/payments/capture-paypal-payment", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { paymentId, paypalOrderId } = request.body;
+
+      if (!paymentId || !paypalOrderId) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Payment ID and PayPal Order ID are required'
+        });
+      }
+
+      const payment = await prisma.payment.findUnique({
+        where: { id: paymentId },
+        include: {
+          booking: {
+            include: {
+              client: true,
+              vendor: true
+            }
+          }
+        }
+      });
+
+      if (!payment) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Payment not found'
+        });
+      }
+
+      if (payment.userId !== userId) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Unauthorized'
+        });
+      }
+
+      // In production, capture the PayPal payment here using PayPal SDK
+      // For now, we'll just update the payment status
+
+      const updatedPayment = await prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          status: 'PAID',
+          paypalOrderId,
+          paypalPaymentId: `CAPTURE_${paypalOrderId}`,
+          updatedAt: new Date()
+        }
+      });
+
+      // Update booking payment status
+      await prisma.booking.update({
+        where: { id: payment.bookingId },
+        data: {
+          paymentStatus: 'PAID'
+        }
+      });
+
+      // Notify vendor about payment
+      await createBookingNotification({
+        userId: payment.booking.vendorId,
+        type: 'PAYMENT_RECEIVED',
+        title: 'Payment Received',
+        message: `Payment of £${payment.amount.toFixed(2)} has been received for your booking. Your payout of £${payment.vendorPayout.toFixed(2)} will be released after service completion.`,
+        actionUrl: `/dashboard/bookings/${payment.bookingId}`,
+        data: {
+          bookingId: payment.bookingId,
+          amount: payment.amount,
+          vendorPayout: payment.vendorPayout
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Payment captured successfully',
+        data: updatedPayment
+      });
+
+    } catch (error) {
+      app.log.error('Capture PayPal payment error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Admin releases payout to vendor after service completion
+  app.post("/api/payments/release-to-vendor", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { paymentId } = request.body;
+
+      // Check if user is admin
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || user.activeRole !== 'ADMIN') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only admin can release payouts'
+        });
+      }
+
+      const payment = await prisma.payment.findUnique({
+        where: { id: paymentId },
+        include: {
+          booking: {
+            include: {
+              vendor: true
+            }
+          }
+        }
+      });
+
+      if (!payment) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Payment not found'
+        });
+      }
+
+      if (payment.status !== 'PAID') {
+        return reply.status(400).send({
+          success: false,
+          error: 'Payment must be completed before releasing payout'
+        });
+      }
+
+      if (payment.payoutStatus !== 'HELD') {
+        return reply.status(400).send({
+          success: false,
+          error: 'Payout has already been processed'
+        });
+      }
+
+      // Update payout status
+      const updatedPayment = await prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          payoutStatus: 'RELEASED_TO_VENDOR',
+          updatedAt: new Date()
+        }
+      });
+
+      // Notify vendor about payout release
+      await createBookingNotification({
+        userId: payment.booking.vendorId,
+        type: 'PAYOUT_RELEASED',
+        title: 'Payout Released',
+        message: `Your payout of £${payment.vendorPayout.toFixed(2)} has been released and will be transferred to your account shortly.`,
+        actionUrl: `/dashboard/payments`,
+        data: {
+          paymentId: payment.id,
+          amount: payment.vendorPayout
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Payout released to vendor',
+        data: updatedPayment
+      });
+
+    } catch (error) {
+      app.log.error('Release payout error:', error);
       return reply.status(500).send({
         success: false,
         error: 'Internal server error'
@@ -2661,6 +3483,248 @@ async function start() {
 
     } catch (error) {
       app.log.error('Get payments error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get vendor clients
+  app.get("/api/vendor/clients", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { vendorProfile: true }
+      });
+
+      if (!user || user.activeRole !== 'VENDOR') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only vendors can view their clients'
+        });
+      }
+
+      // Fetch all bookings for this vendor
+      // Filter out cancelled bookings if desired, or keep them to show history
+      const bookings = await prisma.booking.findMany({
+        where: {
+          vendorId: userId,
+          status: { not: 'CANCELLED' }
+        },
+        include: {
+          client: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phoneNumber: true,
+              avatarUrl: true
+            }
+          }
+        },
+        orderBy: { bookingDate: 'desc' }
+      });
+
+      // Group bookings by client
+      const clientsMap = new Map();
+
+      bookings.forEach(booking => {
+        const clientId = booking.clientId;
+        const client = booking.client;
+
+        if (!clientsMap.has(clientId)) {
+          clientsMap.set(clientId, {
+            id: client.id,
+            firstName: client.firstName,
+            lastName: client.lastName,
+            email: client.email,
+            phoneNumber: client.phoneNumber,
+            avatarUrl: client.avatarUrl,
+            totalBookings: 0,
+            lastBookingDate: booking.bookingDate, // First one encountered is latest due to orderBy
+            bookings: [] // Keep track for status calculation
+          });
+        }
+
+        const clientData = clientsMap.get(clientId);
+        clientData.totalBookings += 1;
+        clientData.bookings.push(booking);
+      });
+
+      // Format and calculate status
+      const clients = Array.from(clientsMap.values()).map(client => {
+        const hasActiveBooking = client.bookings.some(b => ['PENDING', 'CONFIRMED'].includes(b.status));
+        let status = 'NEW';
+
+        if (hasActiveBooking) {
+          status = 'ACTIVE';
+        } else if (client.totalBookings > 1) {
+          status = 'RECURRING';
+        }
+
+        return {
+          id: client.id,
+          firstName: client.firstName,
+          lastName: client.lastName,
+          email: client.email,
+          phoneNumber: client.phoneNumber,
+          avatarUrl: client.avatarUrl,
+          totalBookings: client.totalBookings,
+          lastBookingDate: client.lastBookingDate,
+          status
+        };
+      });
+
+      return reply.send({
+        success: true,
+        data: { clients }
+      });
+
+    } catch (error) {
+      app.log.error('Get vendor clients error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get vendor analytics
+  app.get("/api/vendor/analytics", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { vendorProfile: true }
+      });
+
+      if (!user || user.activeRole !== 'VENDOR') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only vendors can view analytics'
+        });
+      }
+
+      const vendorId = userId; // In this schema, bookings.vendorId refers to User.id (who is a vendor)
+
+      // 1. Fetch all bookings with payments and package info
+      const bookings = await prisma.booking.findMany({
+        where: {
+          vendorId: vendorId,
+          status: { not: 'CANCELLED' } // Include pending/confirmed/completed
+        },
+        include: {
+          payments: true,
+          servicePackage: true
+        }
+      });
+
+      // 2. Calculate Overview Stats
+      const totalBookings = bookings.length;
+
+      // Calculate revenue from PAID payments
+      let totalRevenue = 0;
+      bookings.forEach(b => {
+        const paidAmount = b.payments
+          .filter(p => p.status === 'PAID')
+          .reduce((sum, p) => sum + p.amount, 0);
+        totalRevenue += paidAmount;
+      });
+
+      const avgBookingValue = totalBookings > 0 ? totalRevenue / totalBookings : 0;
+
+      // Unique clients
+      const uniqueClients = new Set(bookings.map(b => b.clientId));
+      const clientBase = uniqueClients.size;
+
+
+      // 3. Calculate Revenue Trend (Last 6 Months)
+      const revenueTrend = [];
+      const now = new Date();
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const monthName = d.toLocaleString('default', { month: 'short' });
+        const year = d.getFullYear();
+        const monthIndex = d.getMonth(); // 0-11
+
+        // Filter payments in this month
+        let monthlyRevenue = 0;
+        bookings.forEach(b => {
+          b.payments.forEach(p => {
+            if (p.status === 'PAID') {
+              const pDate = new Date(p.createdAt);
+              if (pDate.getMonth() === monthIndex && pDate.getFullYear() === year) {
+                monthlyRevenue += p.amount;
+              }
+            }
+          });
+        });
+
+        revenueTrend.push({
+          month: monthName,
+          revenue: monthlyRevenue
+        });
+      }
+
+      // 4. Calculate Package Performance
+      const packageStats = new Map(); // packageId -> { name, bookings, revenue, color }
+
+      bookings.forEach(b => {
+        const pkgId = b.servicePackageId || 'custom';
+        const pkgName = b.servicePackage ? b.servicePackage.title : 'Custom Service';
+
+        if (!packageStats.has(pkgId)) {
+          packageStats.set(pkgId, {
+            name: pkgName,
+            bookings: 0,
+            revenue: 0,
+            // Assign color based on index or hash later if needed, hardcode for now or cycle through frontend colors
+          });
+        }
+
+        const stats = packageStats.get(pkgId);
+        stats.bookings += 1;
+
+        const bookingRevenue = b.payments
+          .filter(p => p.status === 'PAID')
+          .reduce((sum, p) => sum + p.amount, 0);
+        stats.revenue += bookingRevenue;
+      });
+
+      // Sort by revenue desc and take top 5
+      const packagePerformance = Array.from(packageStats.values())
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, 5)
+        .map((pkg, index) => {
+          const colors = ['bg-orange-500', 'bg-purple-500', 'bg-blue-500', 'bg-green-500', 'bg-red-500'];
+          return {
+            ...pkg,
+            color: colors[index % colors.length]
+          };
+        });
+
+
+      return reply.send({
+        success: true,
+        data: {
+          overview: {
+            totalRevenue,
+            totalBookings,
+            avgBookingValue,
+            clientBase
+          },
+          revenueTrend,
+          packagePerformance
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get vendor analytics error:', error);
       return reply.status(500).send({
         success: false,
         error: 'Internal server error'
@@ -3039,7 +4103,7 @@ async function start() {
   // Get all vendors
   app.get("/api/vendors", async (request, reply) => {
     try {
-      const { category, city, search, page = 1, limit = 12, onlyBooked = 'false' } = request.query;
+      const { category, city, search, query, userId, page = 1, limit = 12, onlyBooked = 'false' } = request.query;
 
       let currentUserId = null;
       if (onlyBooked === 'true') {
@@ -3060,6 +4124,10 @@ async function start() {
         status: 'APPROVED'
       };
 
+      if (userId) {
+        whereClause.userId = userId;
+      }
+
       if (category) {
         whereClause.category = category;
       }
@@ -3071,10 +4139,11 @@ async function start() {
         };
       }
 
-      if (search) {
+      const searchTerm = search || query;
+      if (searchTerm) {
         whereClause.OR = [
-          { businessName: { contains: search, mode: 'insensitive' } },
-          { description: { contains: search, mode: 'insensitive' } }
+          { businessName: { contains: searchTerm, mode: 'insensitive' } },
+          { description: { contains: searchTerm, mode: 'insensitive' } }
         ];
       }
 
@@ -3113,7 +4182,8 @@ async function start() {
               select: {
                 firstName: true,
                 lastName: true,
-                avatarUrl: true
+                avatarUrl: true,
+                email: true
               }
             },
             servicePackages: {

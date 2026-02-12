@@ -64,23 +64,72 @@ export default function DashboardPage() {
         }
     };
 
+    const [stats, setStats] = useState<any>({
+        totalBookings: 0,
+        pendingBookings: 0,
+        completedBookings: 0,
+        totalRevenue: 0,
+        totalSpent: 0, // Initialize totalSpent
+        avgRating: 0,
+        activeClients: 0,
+        upcomingEvents: 0
+    });
+
     // Mock data - in real app, fetch from API
-    const stats = {
-        totalBookings: 12,
-        pendingBookings: 3,
-        completedBookings: 9,
-        totalRevenue: 2450,
-        avgRating: 4.8,
-        activeClients: 8,
-        upcomingEvents: 4
+    // const stats = {
+    //     totalBookings: 12,
+    //     pendingBookings: 3,
+    //     completedBookings: 9,
+    //     totalRevenue: 2450,
+    //     avgRating: 4.8,
+    //     activeClients: 8,
+    //     upcomingEvents: 4
+    // };
+
+    const fetchStats = async () => {
+        try {
+            const token = localStorage.getItem('accessToken');
+            if (!token) return;
+
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/dashboard/stats`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success) {
+                    setStats({
+                        ...data.data,
+                        // Backend might not return all these fields yet, map what we can
+                        totalBookings: data.data.totalBookings || 0,
+                        pendingBookings: data.data.pendingBookings || 0,
+                        completedBookings: data.data.completedBookings || 0,
+                        totalRevenue: data.data.totalRevenue || 0,
+                        avgRating: data.data.averageRating || 0,
+                        activeClients: data.data.activeClients || data.data.activeVendors || 0,
+                        upcomingEvents: data.data.pendingBookings || 0 // Proxy for now
+                    });
+
+                    // Set recent bookings if available
+                    if (data.data.recentBookings) {
+                        setRecentBookings(data.data.recentBookings);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Failed to fetch stats:', error);
+        }
     };
 
-    const recentBookings = [
-        { id: 1, client: 'Sarah Johnson', service: 'Wedding Photography', date: '2024-12-15', status: 'Confirmed', amount: 1200 },
-        { id: 2, client: 'Mike Wilson', service: 'Corporate Catering', date: '2024-12-10', status: 'Pending', amount: 850 },
-        { id: 3, client: 'Emma Davis', service: 'Birthday Decoration', date: '2024-12-05', status: 'Completed', amount: 450 },
-        { id: 4, client: 'James Brown', service: 'Live Music Band', date: '2024-12-01', status: 'Confirmed', amount: 2000 },
-    ];
+    useEffect(() => {
+        if (user) {
+            fetchStats();
+        }
+    }, [user]);
+
+    const [recentBookings, setRecentBookings] = useState<any[]>([]);
 
     const quickActions = [
         { title: 'Create New Package', icon: Package, href: '/dashboard/packages/new', color: 'bg-purple-100 text-purple-600' },
@@ -152,8 +201,12 @@ export default function DashboardPage() {
                                 12.5%
                             </span>
                         </div>
-                        <h3 className="text-2xl font-bold text-gray-900">£{stats.totalRevenue.toLocaleString()}</h3>
-                        <p className="text-gray-600 text-sm mt-1">Total Revenue</p>
+                        <h3 className="text-2xl font-bold text-gray-900">
+                            £{((user.activeRole === 'CLIENT' ? stats.totalSpent : stats.totalRevenue) || 0).toLocaleString()}
+                        </h3>
+                        <p className="text-gray-600 text-sm mt-1">
+                            {user.activeRole === 'CLIENT' ? 'Total Spent' : 'Total Revenue'}
+                        </p>
                     </div>
 
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -181,7 +234,9 @@ export default function DashboardPage() {
                             </span>
                         </div>
                         <h3 className="text-2xl font-bold text-gray-900">{stats.activeClients}</h3>
-                        <p className="text-gray-600 text-sm mt-1">Active Clients</p>
+                        <p className="text-gray-600 text-sm mt-1">
+                            {user.activeRole === 'CLIENT' ? 'Active Vendors' : 'Active Clients'}
+                        </p>
                     </div>
 
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -194,8 +249,12 @@ export default function DashboardPage() {
                                 1.2%
                             </span>
                         </div>
-                        <h3 className="text-2xl font-bold text-gray-900">{stats.avgRating}/5</h3>
-                        <p className="text-gray-600 text-sm mt-1">Average Rating</p>
+                        <h3 className="text-2xl font-bold text-gray-900">
+                            {user.activeRole === 'CLIENT' ? stats.completedBookings : stats.avgRating + '/5'}
+                        </h3>
+                        <p className="text-gray-600 text-sm mt-1">
+                            {user.activeRole === 'CLIENT' ? 'Completed Events' : 'Average Rating'}
+                        </p>
                     </div>
                 </div>
 
