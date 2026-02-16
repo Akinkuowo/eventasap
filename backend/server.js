@@ -300,6 +300,15 @@ const preferenceUpdateSchema = z.object({
   }).optional()
 });
 
+const adminRegisterSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
+  firstName: z.string().min(2),
+  lastName: z.string().min(2),
+  phoneNumber: z.string(),
+  adminSecret: z.string()
+});
+
 // Admin schemas
 const vendorApprovalSchema = z.object({
   notes: z.string().optional()
@@ -588,6 +597,81 @@ async function start() {
     }
   });
 
+  // Admin Registration
+  app.post("/api/admin/auth/register", async (request, reply) => {
+    try {
+      const data = adminRegisterSchema.parse(request.body);
+
+      // Simple secret check for demo purposes
+      // In production, this should be a robust key or handled via existing admin invite
+      const ADMIN_SECRET = process.env.ADMIN_SECRET || 'EVENTASAP_ADMIN_2026';
+      if (data.adminSecret !== ADMIN_SECRET) {
+        return reply.status(403).send({
+          success: false,
+          error: 'Invalid admin registration secret'
+        });
+      }
+
+      const existingUser = await prisma.user.findUnique({
+        where: { email: data.email }
+      });
+
+      if (existingUser) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Email already registered'
+        });
+      }
+
+      const hashedPassword = await bcrypt.hash(data.password, 10);
+
+      const user = await prisma.user.create({
+        data: {
+          email: data.email,
+          password: hashedPassword,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          phoneNumber: data.phoneNumber,
+          activeRole: 'ADMIN',
+          emailVerified: true, // Auto-verify for admins for ease of setup
+          hasClientProfile: false,
+          hasVendorProfile: false
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Admin registered successfully!',
+        data: {
+          user: {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            activeRole: user.activeRole
+          }
+        }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors.map(err => ({
+            field: err.path.join('.'),
+            message: err.message
+          }))
+        });
+      }
+      app.log.error('Admin registration error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
   // Verify email endpoint
   app.get("/api/auth/verify-email/:token", async (request, reply) => {
     try {
@@ -807,7 +891,7 @@ async function start() {
             hasVendorProfile: user.hasVendorProfile,
             hasClientProfile: user.hasClientProfile,
             emailVerified: user.emailVerified,
-            isAdmin: user.isAdmin || false,
+            isAdmin: user.activeRole === 'ADMIN',
             vendorProfile: user.vendorProfile,
             clientProfile: user.clientProfile
           },
@@ -1058,7 +1142,7 @@ async function start() {
             hasVendorProfile: user.hasVendorProfile,
             hasClientProfile: user.hasClientProfile,
             emailVerified: user.emailVerified,
-            isAdmin: user.isAdmin || false,
+            isAdmin: user.activeRole === 'ADMIN',
             ...activeProfile
           },
           availableRoles
@@ -1352,7 +1436,7 @@ async function start() {
         where: { id: userId }
       });
 
-      if (!user || !user.isAdmin) {
+      if (!user || user.activeRole !== 'ADMIN') {
         return reply.status(403).send({
           success: false,
           error: 'Admin access required'
@@ -1426,7 +1510,7 @@ async function start() {
         where: { id: userId }
       });
 
-      if (!user || !user.isAdmin) {
+      if (!user || user.activeRole !== 'ADMIN') {
         return reply.status(403).send({
           success: false,
           error: 'Admin access required'
@@ -1496,6 +1580,228 @@ async function start() {
     }
   });
 
+  // Get platform-wide stats - Admin only
+  app.get("/api/admin/stats", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || user.activeRole !== 'ADMIN') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const [
+        totalUsers,
+        totalVendors,
+        totalBookings,
+        totalRevenue,
+        pendingVendors,
+        heldPayouts
+      ] = await Promise.all([
+        prisma.user.count(),
+        prisma.vendorProfile.count(),
+        prisma.booking.count(),
+        prisma.payment.aggregate({
+          where: { status: 'PAID' },
+          _sum: { amount: true }
+        }),
+        prisma.vendorProfile.count({ where: { status: 'PENDING' } }),
+        prisma.payment.aggregate({
+          where: { payoutStatus: 'HELD', status: 'PAID' },
+          _sum: { vendorPayout: true }
+        })
+      ]);
+
+      return reply.send({
+        success: true,
+        data: {
+          totalUsers,
+          totalVendors,
+          totalBookings,
+          totalRevenue: totalRevenue._sum.amount || 0,
+          pendingVendors,
+          heldPayouts: heldPayouts._sum.vendorPayout || 0,
+          adminCommission: (totalRevenue._sum.amount || 0) * 0.3 // Assuming 30% admin fee based on earlier logic
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get platform stats error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get all users - Admin only
+  app.get("/api/admin/users/all", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || user.activeRole !== 'ADMIN') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const users = await prisma.user.findMany({
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          phoneNumber: true,
+          activeRole: true,
+          emailVerified: true,
+          createdAt: true,
+          hasVendorProfile: true,
+          hasClientProfile: true
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      return reply.send({
+        success: true,
+        data: { users }
+      });
+
+    } catch (error) {
+      app.log.error('Get all users error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get all held payments - Admin only
+  app.get("/api/admin/payments/held", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || user.activeRole !== 'ADMIN') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const payments = await prisma.payment.findMany({
+        where: {
+          payoutStatus: 'HELD',
+          status: 'PAID'
+        },
+        include: {
+          booking: {
+            include: {
+              vendor: true,
+              client: true
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      return reply.send({
+        success: true,
+        data: { payments }
+      });
+
+    } catch (error) {
+      app.log.error('Get held payments error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Release payment to vendor - Admin only
+  app.post("/api/admin/payments/:paymentId/release", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { paymentId } = request.params;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || user.activeRole !== 'ADMIN') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const payment = await prisma.payment.findUnique({
+        where: { id: paymentId },
+        include: { booking: true }
+      });
+
+      if (!payment) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Payment not found'
+        });
+      }
+
+      if (payment.payoutStatus !== 'HELD') {
+        return reply.status(400).send({
+          success: false,
+          error: 'Payment is not in HELD status'
+        });
+      }
+
+      const updatedPayment = await prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          payoutStatus: 'RELEASED',
+          payoutDate: new Date()
+        }
+      });
+
+      // Create notification for vendor
+      await prisma.notification.create({
+        data: {
+          userId: payment.booking.vendorId,
+          type: 'PAYMENT_RELEASED',
+          title: 'Payment Released! 💸',
+          message: `Your payout for booking #${payment.booking.id.slice(-6).toUpperCase()} has been released and will be credited to your account shortly.`,
+          data: { paymentId, bookingId: payment.bookingId }
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Payment released successfully',
+        data: { payment: updatedPayment }
+      });
+
+    } catch (error) {
+      app.log.error('Release payment error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
   // Approve vendor
   app.post("/api/admin/vendors/:vendorId/approve", { preHandler: [authenticate] }, async (request, reply) => {
     try {
@@ -1508,7 +1814,7 @@ async function start() {
         where: { id: userId }
       });
 
-      if (!user || !user.isAdmin) {
+      if (!user || user.activeRole !== 'ADMIN') {
         return reply.status(403).send({
           success: false,
           error: 'Admin access required'
@@ -1583,7 +1889,7 @@ async function start() {
         where: { id: userId }
       });
 
-      if (!user || !user.isAdmin) {
+      if (!user || user.activeRole !== 'ADMIN') {
         return reply.status(403).send({
           success: false,
           error: 'Admin access required'
@@ -1673,7 +1979,7 @@ async function start() {
       });
 
       const isOwner = user.vendorProfile?.businessProof === sanitizedFilename;
-      const isAdmin = user.isAdmin;
+      const isAdmin = user.activeRole === 'ADMIN';
 
       if (!isOwner && !isAdmin) {
         return reply.status(403).send({

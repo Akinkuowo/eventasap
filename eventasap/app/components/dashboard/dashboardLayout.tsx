@@ -24,7 +24,9 @@ import {
     BarChart3,
     Sparkles,
     Briefcase,
-    UserCircle
+    UserCircle,
+    Shield,
+    FileText
 } from 'lucide-react';
 import RoleSwitcher from './RoleSwitcher';
 import { toast } from 'sonner';
@@ -161,10 +163,40 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             roles: ['VENDOR']
         },
         {
+            name: 'Platform Overview',
+            href: '/dashboard/admin',
+            icon: Shield,
+            roles: ['ADMIN']
+        },
+        {
+            name: 'User Management',
+            href: '/dashboard/admin/users',
+            icon: Users,
+            roles: ['ADMIN']
+        },
+        {
+            name: 'Vendor Oversight',
+            href: '/dashboard/admin/vendors',
+            icon: Briefcase,
+            roles: ['ADMIN']
+        },
+        {
+            name: 'Payment Controls',
+            href: '/dashboard/admin/payments',
+            icon: CreditCard,
+            roles: ['ADMIN']
+        },
+        {
+            name: 'Reports',
+            href: '/dashboard/admin/reports',
+            icon: FileText,
+            roles: ['ADMIN']
+        },
+        {
             name: 'Settings',
             href: '/dashboard/settings',
             icon: Settings,
-            roles: ['CLIENT', 'VENDOR']
+            roles: ['CLIENT', 'VENDOR', 'ADMIN']
         },
     ];
 
