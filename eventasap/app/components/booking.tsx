@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchWithAuth } from '@/utils/tokenManager';
+import BookingActions from './dashboard/booking-actions';
+import AdjustPriceModal from './dashboard/adjust-price-modal';
 
 interface Booking {
     id: string;
@@ -39,6 +41,9 @@ interface Booking {
     }>;
     bookingDate: string;
     quotedPrice?: number;
+    adjustedPrice?: number;
+    priceAdjustmentReason?: string;
+    clientApprovalStatus?: 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
     paymentStatus?: string;
     notes?: string;
 }
@@ -59,6 +64,16 @@ export default function BookingsPage() {
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled' | 'completed'>('all');
     const [searchQuery, setSearchQuery] = useState('');
+    const [user, setUser] = useState<any>(null);
+    const [showAdjustModal, setShowAdjustModal] = useState(false);
+    const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+
+    useEffect(() => {
+        const userData = localStorage.getItem('user');
+        if (userData) {
+            setUser(JSON.parse(userData));
+        }
+    }, []);
 
     useEffect(() => {
         fetchBookings();
@@ -360,7 +375,7 @@ export default function BookingsPage() {
                                     </div>
 
                                     {/* Right side: Actions */}
-                                    <div className="flex flex-col space-y-3">
+                                    <div className="flex flex-col space-y-3 min-w-[200px]">
                                         <button
                                             onClick={() => window.location.href = `/dashboard/bookings/${booking.id}`}
                                             className="px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white font-medium rounded-xl hover:shadow-lg transition-all duration-300 flex items-center justify-center"
@@ -368,16 +383,43 @@ export default function BookingsPage() {
                                             <Eye className="w-4 h-4 mr-2" />
                                             View Details
                                         </button>
-                                        <button
-                                            onClick={() => window.location.href = `/dashboard/messages?vendor=${booking.vendor.id}`}
-                                            className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors flex items-center justify-center"
-                                        >
-                                            <MessageSquare className="w-4 h-4 mr-2" />
-                                            Message Vendor
-                                        </button>
-                                        {booking.status === 'CONFIRMED' && booking.paymentStatus !== 'PAID' && (
+
+                                        {user?.activeRole === 'VENDOR' && booking.status === 'PENDING' && (
+                                            <>
+                                                {!booking.adjustedPrice && (
+                                                    <button
+                                                        onClick={() => {
+                                                            setSelectedBooking(booking);
+                                                            setShowAdjustModal(true);
+                                                        }}
+                                                        className="px-4 py-2 border border-orange-300 text-orange-600 font-medium rounded-xl hover:bg-orange-50 transition-colors flex items-center justify-center"
+                                                    >
+                                                        <DollarSign className="w-4 h-4 mr-2" />
+                                                        Adjust Price
+                                                    </button>
+                                                )}
+                                                <div className="pt-2">
+                                                    <BookingActions
+                                                        bookingId={booking.id}
+                                                        onSuccess={fetchBookings}
+                                                    />
+                                                </div>
+                                            </>
+                                        )}
+
+                                        {user?.activeRole === 'CLIENT' && (
                                             <button
-                                                onClick={() => window.location.href = `/dashboard/payments?booking=${booking.id}`}
+                                                onClick={() => window.location.href = `/dashboard/messages?vendor=${booking.vendor.id}`}
+                                                className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors flex items-center justify-center"
+                                            >
+                                                <MessageSquare className="w-4 h-4 mr-2" />
+                                                Message Vendor
+                                            </button>
+                                        )}
+
+                                        {user?.activeRole === 'CLIENT' && booking.status === 'CONFIRMED' && booking.paymentStatus !== 'PAID' && (
+                                            <button
+                                                onClick={() => window.location.href = `/dashboard/payments/${booking.id}`}
                                                 className="px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white font-medium rounded-xl hover:shadow-lg transition-all duration-300 flex items-center justify-center"
                                             >
                                                 <DollarSign className="w-4 h-4 mr-2" />
@@ -390,6 +432,18 @@ export default function BookingsPage() {
                         </div>
                     ))}
                 </div>
+            )}
+
+            {showAdjustModal && selectedBooking && (
+                <AdjustPriceModal
+                    bookingId={selectedBooking.id}
+                    currentPrice={selectedBooking.budget}
+                    onClose={() => {
+                        setShowAdjustModal(false);
+                        setSelectedBooking(null);
+                    }}
+                    onSuccess={fetchBookings}
+                />
             )}
         </div>
     );

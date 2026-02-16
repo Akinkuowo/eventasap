@@ -30,6 +30,7 @@ import RoleSwitcher from './RoleSwitcher';
 import { toast } from 'sonner';
 import Image from 'next/image';
 import Link from 'next/link';
+import NotificationBell from '../notifications/notification-bell';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -298,10 +299,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                             {/* Right side */}
                             <div className="flex items-center space-x-4">
                                 {/* Notifications */}
-                                <button className="relative p-2 text-gray-600 hover:text-orange-600 hover:bg-gray-100 rounded-lg">
-                                    <Bell className="w-5 h-5" />
-                                    <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-                                </button>
+                                <NotificationBell />
 
                                 {/* Quick Stats */}
                                 <div className="hidden lg:flex items-center space-x-6">

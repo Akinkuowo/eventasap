@@ -11,6 +11,9 @@ import {
 import { toast } from 'sonner';
 import { fetchWithAuth } from '@/utils/tokenManager';
 import { useRouter } from 'next/navigation';
+import BookingActions from './booking-actions';
+import AdjustPriceModal from './adjust-price-modal';
+import PriceApprovalCard from './price-approval-card';
 
 interface BookingDetailsProps {
     bookingId: string;
@@ -47,6 +50,9 @@ interface Booking {
     };
     payments: any[];
     quotedPrice?: number;
+    adjustedPrice?: number;
+    priceAdjustmentReason?: string;
+    clientApprovalStatus?: 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
     paymentStatus?: string;
     notes?: string;
     createdAt: string;
@@ -61,6 +67,7 @@ export default function BookingDetails({ bookingId }: BookingDetailsProps) {
     const [isUpdating, setIsUpdating] = useState(false);
     const [notes, setNotes] = useState('');
     const [quotedPrice, setQuotedPrice] = useState<string>('');
+    const [showAdjustModal, setShowAdjustModal] = useState(false);
     const router = useRouter();
 
     useEffect(() => {
@@ -192,28 +199,54 @@ export default function BookingDetails({ bookingId }: BookingDetailsProps) {
 
                 {isVendor && booking.status === 'PENDING' && (
                     <div className="flex space-x-3">
-                        <button
-                            onClick={() => handleUpdateStatus('CANCELLED')}
-                            disabled={isUpdating}
-                            className="px-6 py-2 border border-red-200 text-red-600 font-semibold rounded-xl hover:bg-red-50 transition-all disabled:opacity-50"
-                        >
-                            Decline Request
-                        </button>
-                        <button
-                            onClick={() => handleUpdateStatus('CONFIRMED')}
-                            disabled={isUpdating}
-                            className="px-6 py-2 bg-gradient-to-r from-orange-500 to-orange-600 text-white font-semibold rounded-xl hover:shadow-lg transition-all duration-300 disabled:opacity-50 flex items-center"
-                        >
-                            {isUpdating ? (
-                                <Clock className="w-4 h-4 mr-2 animate-spin" />
-                            ) : (
-                                <CheckCircle className="w-4 h-4 mr-2" />
-                            )}
-                            Confirm Booking
-                        </button>
+                        {!booking.adjustedPrice && (
+                            <button
+                                onClick={() => setShowAdjustModal(true)}
+                                className="px-6 py-2 border border-orange-300 text-orange-600 font-semibold rounded-xl hover:bg-orange-50 transition-all flex items-center"
+                            >
+                                <DollarSign className="w-4 h-4 mr-2" />
+                                Adjust Price
+                            </button>
+                        )}
+                        <BookingActions
+                            bookingId={bookingId}
+                            onSuccess={fetchBookingDetails}
+                        />
                     </div>
                 )}
             </div>
+
+            {/* Client Actions */}
+            {!isVendor && booking.status === 'CONFIRMED' && booking.paymentStatus !== 'PAID' && (
+                <div className="max-w-2xl mx-auto mb-6">
+                    <div className="bg-green-50 border-2 border-green-200 rounded-xl p-6 flex items-center justify-between">
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-900">Booking Confirmed!</h3>
+                            <p className="text-gray-600 text-sm">Please complete the payment to secure your booking.</p>
+                        </div>
+                        <button
+                            onClick={() => router.push(`/dashboard/payments/${bookingId}`)}
+                            className="px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white font-bold rounded-xl hover:shadow-lg transition-all flex items-center"
+                        >
+                            <DollarSign className="w-5 h-5 mr-2" />
+                            Pay Now
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Price Approval Card for Clients */}
+            {!isVendor && booking.adjustedPrice && booking.clientApprovalStatus === 'PENDING_APPROVAL' && (
+                <div className="max-w-2xl mx-auto mb-6">
+                    <PriceApprovalCard
+                        bookingId={bookingId}
+                        adjustedPrice={booking.adjustedPrice}
+                        originalPrice={booking.budget}
+                        reason={booking.priceAdjustmentReason}
+                        onSuccess={fetchBookingDetails}
+                    />
+                </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Main Information */}
@@ -406,6 +439,26 @@ export default function BookingDetails({ bookingId }: BookingDetailsProps) {
                                     <p className="text-xs text-gray-500">{formatDate(booking.createdAt)}</p>
                                 </div>
                             </div>
+
+                            {booking.adjustedPrice && (
+                                <div className="flex items-start">
+                                    <div className="w-8 h-8 rounded-full bg-orange-50 flex items-center justify-center shrink-0 mt-0.5 border border-orange-100">
+                                        <div className="w-2 h-2 rounded-full bg-orange-500"></div>
+                                    </div>
+                                    <div className="ml-4">
+                                        <p className="text-sm font-bold text-gray-900">Price Adjusted</p>
+                                        <p className="text-xs text-gray-500">Proposed: £{booking.adjustedPrice}</p>
+                                        {booking.clientApprovalStatus !== 'PENDING_APPROVAL' && (
+                                            <p className="text-xs font-medium mt-1 uppercase tracking-tighter">
+                                                Status: <span className={booking.clientApprovalStatus === 'APPROVED' ? 'text-green-600' : 'text-red-600'}>
+                                                    {booking.clientApprovalStatus}
+                                                </span>
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="flex items-start">
                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5 border ${booking.status !== 'PENDING' ? 'bg-orange-50 border-orange-100' : 'bg-gray-50 border-gray-100'}`}>
                                     <div className={`w-2 h-2 rounded-full ${booking.status !== 'PENDING' ? 'bg-orange-500' : 'bg-gray-300'}`}></div>
@@ -419,10 +472,31 @@ export default function BookingDetails({ bookingId }: BookingDetailsProps) {
                                     )}
                                 </div>
                             </div>
+
+                            {booking.paymentStatus === 'PAID' && (
+                                <div className="flex items-start">
+                                    <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0 mt-0.5 border border-blue-100">
+                                        <CheckCircle className="w-4 h-4 text-blue-500" />
+                                    </div>
+                                    <div className="ml-4">
+                                        <p className="text-sm font-bold text-gray-900">Payment Received</p>
+                                        <p className="text-xs text-gray-500 text-green-600 font-medium">Booking Confirmed & Paid</p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
             </div>
+
+            {showAdjustModal && (
+                <AdjustPriceModal
+                    bookingId={bookingId}
+                    currentPrice={booking.budget}
+                    onClose={() => setShowAdjustModal(false)}
+                    onSuccess={fetchBookingDetails}
+                />
+            )}
         </div>
     );
 }

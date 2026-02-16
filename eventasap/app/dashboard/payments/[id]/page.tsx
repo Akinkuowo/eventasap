@@ -41,7 +41,7 @@ export default function PaymentPage() {
             const data = await response.json();
 
             if (data.success) {
-                setBooking(data.data);
+                setBooking(data.data.booking);
             } else {
                 toast.error('Failed to load booking details');
                 router.push('/dashboard/bookings');
