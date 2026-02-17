@@ -45,7 +45,7 @@ export default function PaymentFailurePage() {
                         </div>
                         <ul className="text-sm text-red-800 space-y-2 ml-7">
                             <li>• Insufficient funds in your account</li>
-                            <li>• Incorrect card or PayPal details</li>
+                            <li>• Incorrect payment details</li>
                             <li>• Payment blocked by your bank</li>
                             <li>• Network or connection issues</li>
                         </ul>

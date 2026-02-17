@@ -2,9 +2,15 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { ArrowLeft, CreditCard, CheckCircle, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
 import { fetchWithAuth } from '@/utils/tokenManager';
 import { toast } from 'sonner';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements } from '@stripe/react-stripe-js';
+import PaymentForm from '@/app/components/dashboard/payment-form';
+
+// Make sure to add NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY to your .env
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '');
 
 interface Booking {
     id: string;
@@ -13,6 +19,7 @@ interface Booking {
     eventLocation: string;
     quotedPrice?: number;
     budget: number;
+    adjustedPrice?: number;
     status: string;
     vendor: {
         firstName: string;
@@ -26,96 +33,57 @@ export default function PaymentPage() {
     const bookingId = params.id as string;
 
     const [booking, setBooking] = useState<Booking | null>(null);
+    const [clientSecret, setClientSecret] = useState('');
     const [loading, setLoading] = useState(true);
-    const [processing, setProcessing] = useState(false);
 
     useEffect(() => {
-        fetchBooking();
-    }, [bookingId]);
+        const initialize = async () => {
+            if (!bookingId) return;
 
-    const fetchBooking = async () => {
-        try {
-            const response = await fetchWithAuth(
-                `${process.env.NEXT_PUBLIC_API_URL}/api/bookings/${bookingId}`
-            );
-            const data = await response.json();
+            try {
+                // 1. Fetch Booking Details
+                const bookingRes = await fetchWithAuth(
+                    `${process.env.NEXT_PUBLIC_API_URL}/api/bookings/${bookingId}`
+                );
+                const bookingData = await bookingRes.json();
 
-            if (data.success) {
-                setBooking(data.data.booking);
-            } else {
-                toast.error('Failed to load booking details');
-                router.push('/dashboard/bookings');
+                if (bookingData.success) {
+                    setBooking(bookingData.data.booking);
+
+                    // 2. Create Payment Intent
+                    const intentRes = await fetchWithAuth(`${process.env.NEXT_PUBLIC_API_URL}/api/payments`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bookingId })
+                    });
+                    const intentData = await intentRes.json();
+
+                    if (intentData.success) {
+                        setClientSecret(intentData.clientSecret);
+                    } else {
+                        toast.error(intentData.error || 'Failed to initialize payment');
+                    }
+
+                } else {
+                    toast.error('Failed to load booking details');
+                    router.push('/dashboard/bookings');
+                }
+            } catch (error) {
+                console.error('Failed to initialize payment page:', error);
+                toast.error('Failed to load payment details');
+            } finally {
+                setLoading(false);
             }
-        } catch (error) {
-            console.error('Failed to fetch booking:', error);
-            toast.error('Failed to load booking');
-            router.push('/dashboard/bookings');
-        } finally {
+        };
+
+        if (process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) {
+            initialize();
+        } else {
+            // If key is missing, stop loading but show error
             setLoading(false);
+            toast.error("Stripe Publishable Key is missing in environment variables.");
         }
-    };
-
-    const handlePayment = async () => {
-        setProcessing(true);
-        try {
-            // Create PayPal order
-            const response = await fetchWithAuth(
-                `${process.env.NEXT_PUBLIC_API_URL}/api/payments/create-paypal-order`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bookingId })
-                }
-            );
-
-            const data = await response.json();
-
-            if (data.success) {
-                // In production, redirect to PayPal approval URL
-                // For now, simulate payment completion
-                toast.success('Creating PayPal order...');
-
-                // Simulate PayPal redirect and return
-                setTimeout(async () => {
-                    await capturePayment(data.data.paymentId);
-                }, 2000);
-            } else {
-                toast.error(data.error || 'Failed to create payment');
-            }
-        } catch (error) {
-            console.error('Payment error:', error);
-            toast.error('Failed to process payment');
-        } finally {
-            setProcessing(false);
-        }
-    };
-
-    const capturePayment = async (paymentId: string) => {
-        try {
-            const response = await fetchWithAuth(
-                `${process.env.NEXT_PUBLIC_API_URL}/api/payments/capture-paypal-payment`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        paymentId,
-                        paypalOrderId: `MOCK_ORDER_${Date.now()}`
-                    })
-                }
-            );
-
-            const data = await response.json();
-
-            if (data.success) {
-                router.push(`/dashboard/payments/success?bookingId=${bookingId}`);
-            } else {
-                router.push(`/dashboard/payments/failure?bookingId=${bookingId}`);
-            }
-        } catch (error) {
-            console.error('Capture payment error:', error);
-            router.push(`/dashboard/payments/failure?bookingId=${bookingId}`);
-        }
-    };
+    }, [bookingId, router]);
 
     if (loading) {
         return (
@@ -126,10 +94,29 @@ export default function PaymentPage() {
     }
 
     if (!booking) {
-        return null;
+        return null; // Or some error state
     }
 
-    const amount = booking.quotedPrice || booking.budget;
+    if (!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) {
+        return (
+            <div className="max-w-2xl mx-auto py-8 px-4 text-center">
+                <h1 className="text-xl font-bold text-red-600">Configuration Error</h1>
+                <p>Stripe Publishable Key is missing. Please check your environment variables.</p>
+            </div>
+        );
+    }
+
+    const amount = booking.adjustedPrice || booking.quotedPrice || booking.budget;
+    const appearance = {
+        theme: 'stripe' as const,
+        variables: {
+            colorPrimary: '#f97316',
+        },
+    };
+    const options = {
+        clientSecret,
+        appearance,
+    };
 
     return (
         <div className="max-w-2xl mx-auto py-8 px-4">
@@ -196,32 +183,16 @@ export default function PaymentPage() {
                     </div>
                 </div>
 
-                {/* Payment Method */}
-                <div className="p-6">
-                    <h2 className="text-lg font-bold text-gray-900 mb-4">Payment Method</h2>
-
-                    <button
-                        onClick={handlePayment}
-                        disabled={processing}
-                        className="w-full flex items-center justify-center px-6 py-4 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-xl font-bold text-lg hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {processing ? (
-                            <>
-                                <Loader2 className="w-6 h-6 mr-3 animate-spin" />
-                                Processing...
-                            </>
-                        ) : (
-                            <>
-                                <CreditCard className="w-6 h-6 mr-3" />
-                                Pay with PayPal
-                            </>
-                        )}
-                    </button>
-
-                    <div className="mt-4 flex items-center justify-center space-x-2 text-sm text-gray-500">
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                        <span>Secure payment powered by PayPal</span>
-                    </div>
+                {/* Stripe Elements Form */}
+                <div className="p-0">
+                    {clientSecret && (
+                        <Elements options={options} stripe={stripePromise}>
+                            <PaymentForm
+                                amount={amount}
+                                vendorName={`${booking.vendor.firstName} ${booking.vendor.lastName}`}
+                            />
+                        </Elements>
+                    )}
                 </div>
             </div>
 
@@ -229,8 +200,7 @@ export default function PaymentPage() {
             <div className="mt-6 bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <p className="text-sm text-blue-800">
                     <strong>Note:</strong> After successful payment, your booking will be confirmed.
-                    Your payment is processed securely through PayPal. 70% of the payment will be released
-                    to the vendor after service completion.
+                    70% of the payment will be released to the vendor after service completion.
                 </p>
             </div>
         </div>

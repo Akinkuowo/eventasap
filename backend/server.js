@@ -14,6 +14,7 @@ const crypto = require("crypto");
 const fs = require("fs").promises;
 const path = require("path");
 const fastifyStatic = require("@fastify/static");
+const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 
 const app = Fastify({
   bodyLimit: 100 * 1024 * 1024, // 100MB limit for base64 images and gallery uploads
@@ -3108,24 +3109,24 @@ async function start() {
       }
 
       // Call Gemini API
-      const response = await fetch(\`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=\${geminiApiKey}\`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { 
+          generationConfig: {
             response_mime_type: "application/json"
           }
         })
       });
 
       if (!response.ok) {
-        throw new Error(\`Gemini API error: \${response.status}\`);
+        throw new Error(`Gemini API error: ${response.status}`);
       }
 
       const result = await response.json();
       const aiResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
-      
+
       let insights = [];
       try {
         insights = aiResponse ? JSON.parse(aiResponse) : [];
@@ -3151,10 +3152,10 @@ async function start() {
             action: "Review Response Time"
           },
           {
-             title: "Profile Visibility",
-             description: "Updating your portfolio with recent high-quality photos can attract more high-budget clients.",
-             type: "Boost",
-             action: "Upload Photos"
+            title: "Profile Visibility",
+            description: "Updating your portfolio with recent high-quality photos can attract more high-budget clients.",
+            type: "Boost",
+            action: "Upload Photos"
           }
         ]
       });
@@ -3203,7 +3204,7 @@ async function start() {
             userId: booking.clientId,
             type: 'BOOKING_STATUS_UPDATE',
             title: 'Booking Status Updated',
-            message: `Your booking status has been updated to ${ data.status }`,
+            message: `Your booking status has been updated to ${data.status}`,
             data: { bookingId: booking.id, status: data.status }
           }
         });
@@ -3299,8 +3300,8 @@ async function start() {
         userId: booking.clientId,
         type: 'PRICE_ADJUSTED',
         title: 'Price Adjustment for Your Booking',
-        message: `The vendor has adjusted the price to £${ adjustedPrice.toFixed(2) }.${ priceAdjustmentReason? 'Reason: ' + priceAdjustmentReason : ''}`,
-        actionUrl: `/ dashboard / bookings / ${ id }`,
+        message: `The vendor has adjusted the price to £${adjustedPrice.toFixed(2)}.${priceAdjustmentReason ? 'Reason: ' + priceAdjustmentReason : ''}`,
+        actionUrl: `/ dashboard / bookings / ${id}`,
         data: { bookingId: id, adjustedPrice, priceAdjustmentReason }
       });
 
@@ -3364,8 +3365,8 @@ async function start() {
         userId: booking.vendorId,
         type: 'PRICE_APPROVED',
         title: 'Client Approved Price Adjustment',
-        message: `The client has approved your adjusted price of £${ booking.adjustedPrice.toFixed(2) }`,
-        actionUrl: `/ dashboard / bookings / ${ id }`,
+        message: `The client has approved your adjusted price of £${booking.adjustedPrice.toFixed(2)}`,
+        actionUrl: `/ dashboard / bookings / ${id}`,
         data: { bookingId: id, adjustedPrice: booking.adjustedPrice }
       });
 
@@ -3429,8 +3430,8 @@ async function start() {
         userId: booking.vendorId,
         type: 'PRICE_REJECTED',
         title: 'Client Rejected Price Adjustment',
-        message: `The client has rejected your adjusted price of £${ booking.adjustedPrice.toFixed(2) }.${ rejectionReason? 'Reason: ' + rejectionReason : ''}`,
-        actionUrl: `/ dashboard / bookings / ${ id }`,
+        message: `The client has rejected your adjusted price of £${booking.adjustedPrice.toFixed(2)}.${rejectionReason ? 'Reason: ' + rejectionReason : ''}`,
+        actionUrl: `/ dashboard / bookings / ${id}`,
         data: { bookingId: id, adjustedPrice: booking.adjustedPrice, rejectionReason }
       });
 
@@ -3486,8 +3487,8 @@ async function start() {
         userId: booking.clientId,
         type: 'BOOKING_ACCEPTED',
         title: 'Booking Accepted',
-        message: `Your booking has been confirmed.Please proceed with payment to secure your booking.`,
-        actionUrl: `/ dashboard / payments / ${ id } `,
+        message: `Your booking has been confirmed. Please proceed with payment to secure your booking.`,
+        actionUrl: `/dashboard/payments/${id}`,
         data: { bookingId: id, amount: booking.quotedPrice || booking.budget }
       });
 
@@ -3545,7 +3546,7 @@ async function start() {
         userId: booking.clientId,
         type: 'BOOKING_DECLINED',
         title: 'Booking Declined',
-        message: `Unfortunately, the vendor has declined your booking.${ declineReason ? 'Reason: ' + declineReason : '' } `,
+        message: `Unfortunately, the vendor has declined your booking.${declineReason ? 'Reason: ' + declineReason : ''} `,
         actionUrl: `/ dashboard / bookings`,
         data: { bookingId: id, declineReason }
       });
@@ -3692,170 +3693,126 @@ async function start() {
     }
   });
 
-  // Create PayPal order for booking payment
-  app.post("/api/payments/create-paypal-order", { preHandler: [authenticate] }, async (request, reply) => {
+
+  // Create Payment Intent (Stripe)
+  app.post("/api/payments", { preHandler: [authenticate] }, async (request, reply) => {
     try {
       const userId = request.user.userId;
       const { bookingId } = request.body;
 
       if (!bookingId) {
-        return reply.status(400).send({
-          success: false,
-          error: 'Booking ID is required'
-        });
+        return reply.status(400).send({ success: false, error: 'Booking ID is required' });
       }
 
       const booking = await prisma.booking.findUnique({
-        where: { id: bookingId },
-        include: {
-          client: true,
-          vendor: true
+        where: { id: bookingId }
+      });
+
+      if (!booking) return reply.status(404).send({ success: false, error: 'Booking not found' });
+      if (booking.clientId !== userId) return reply.status(403).send({ success: false, error: 'Unauthorized' });
+
+      if (!stripe) {
+        return reply.status(500).send({ success: false, error: 'Stripe is not configured on the server.' });
+      }
+
+      // Calculate amount (ensure it's in cents/pence for Stripe)
+      const amount = booking.adjustedPrice || booking.quotedPrice || booking.budget;
+      const amountInCents = Math.round(amount * 100);
+
+      // Create PaymentIntent
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amountInCents,
+        currency: 'gbp',
+        automatic_payment_methods: {
+          enabled: true,
+        },
+        metadata: {
+          bookingId: booking.id,
+          userId: userId
         }
       });
 
-      if (!booking) {
-        return reply.status(404).send({
-          success: false,
-          error: 'Booking not found'
-        });
-      }
-
-      if (booking.clientId !== userId) {
-        return reply.status(403).send({
-          success: false,
-          error: 'Only the client can pay for this booking'
-        });
-      }
-
-      const amount = booking.quotedPrice || booking.budget;
-
-      // Create PayPal order (simplified - you'll need to use the actual PayPal SDK)
-      // For now, we'll create a placeholder payment record
+      // Determine existing payment record or create new?
+      // For now, let's create a Pending payment record to track the intent
       const payment = await prisma.payment.create({
         data: {
           bookingId,
           userId,
           amount,
           currency: 'GBP',
-          paymentMethod: 'PAYPAL',
+          paymentMethod: 'STRIPE',
+          stripePaymentId: paymentIntent.id,
           status: 'PENDING',
-          description: `Payment for booking #${ bookingId }`,
-          adminFee: amount * 0.3, // 30% admin fee
-          vendorPayout: amount * 0.7, // 70% to vendor
+          adminFee: amount * 0.3,
+          vendorPayout: amount * 0.7,
           payoutStatus: 'HELD'
-        }
-      });
-
-      // In production, you would create an actual PayPal order here
-      // and return the approval URL
-      const approvalUrl = `https://www.sandbox.paypal.com/checkoutnow?token=MOCK_TOKEN_${payment.id}`;
-
-        return reply.send({
-          success: true,
-          message: 'PayPal order created',
-          data: {
-            paymentId: payment.id,
-            approvalUrl,
-            amount,
-            currency: 'GBP'
-          }
-        });
-
-    } catch (error) {
-      app.log.error('Create PayPal order error:', error);
-      return reply.status(500).send({
-        success: false,
-        error: 'Internal server error'
-      });
-    }
-  });
-
-  // Capture PayPal payment after client approval
-  app.post("/api/payments/capture-paypal-payment", { preHandler: [authenticate] }, async (request, reply) => {
-    try {
-      const userId = request.user.userId;
-      const { paymentId, paypalOrderId } = request.body;
-
-      if (!paymentId || !paypalOrderId) {
-        return reply.status(400).send({
-          success: false,
-          error: 'Payment ID and PayPal Order ID are required'
-        });
-      }
-
-      const payment = await prisma.payment.findUnique({
-        where: { id: paymentId },
-        include: {
-          booking: {
-            include: {
-              client: true,
-              vendor: true
-            }
-          }
-        }
-      });
-
-      if (!payment) {
-        return reply.status(404).send({
-          success: false,
-          error: 'Payment not found'
-        });
-      }
-
-      if (payment.userId !== userId) {
-        return reply.status(403).send({
-          success: false,
-          error: 'Unauthorized'
-        });
-      }
-
-      // In production, capture the PayPal payment here using PayPal SDK
-      // For now, we'll just update the payment status
-
-      const updatedPayment = await prisma.payment.update({
-        where: { id: paymentId },
-        data: {
-          status: 'PAID',
-          paypalOrderId,
-          paypalPaymentId: `CAPTURE_${paypalOrderId}`,
-          updatedAt: new Date()
-        }
-      });
-
-      // Update booking payment status
-      await prisma.booking.update({
-        where: { id: payment.bookingId },
-        data: {
-          paymentStatus: 'PAID'
-        }
-      });
-
-      // Notify vendor about payment
-      await createBookingNotification({
-        userId: payment.booking.vendorId,
-        type: 'PAYMENT_RECEIVED',
-        title: 'Payment Received',
-        message: `Payment of £${payment.amount.toFixed(2)} has been received for your booking. Your payout of £${payment.vendorPayout.toFixed(2)} will be released after service completion.`,
-        actionUrl: `/dashboard/bookings/${payment.bookingId}`,
-        data: {
-          bookingId: payment.bookingId,
-          amount: payment.amount,
-          vendorPayout: payment.vendorPayout
         }
       });
 
       return reply.send({
         success: true,
-        message: 'Payment captured successfully',
-        data: updatedPayment
+        clientSecret: paymentIntent.client_secret,
+        paymentId: payment.id
       });
 
     } catch (error) {
-      app.log.error('Capture PayPal payment error:', error);
-      return reply.status(500).send({
-        success: false,
-        error: 'Internal server error'
-      });
+      app.log.error('Stripe PaymentIntent error:', error);
+      return reply.status(500).send({ success: false, error: 'Payment initialization failed' });
+    }
+  });
+
+  // Verify Payment (Stripe)
+  app.post("/api/payments/verify", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const { paymentIntentId } = request.body;
+
+      if (!stripe) {
+        return reply.status(500).send({ success: false, error: 'Stripe is not configured on the server.' });
+      }
+
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+      if (paymentIntent.status === 'succeeded') {
+        const payment = await prisma.payment.findFirst({
+          where: { stripePaymentId: paymentIntentId }
+        });
+
+        if (payment && payment.status !== 'PAID') {
+          const updatedPayment = await prisma.$transaction(async (tx) => {
+            const p = await tx.payment.update({
+              where: { id: payment.id },
+              data: { status: 'PAID', updatedAt: new Date() }
+            });
+
+            await tx.booking.update({
+              where: { id: payment.bookingId },
+              data: { paymentStatus: 'PAID', status: 'CONFIRMED' }
+            });
+
+            return p;
+          });
+
+          // Notify Vendor
+          const booking = await prisma.booking.findUnique({ where: { id: payment.bookingId } });
+          if (booking) {
+            await createBookingNotification({
+              userId: booking.vendorId,
+              type: 'PAYMENT_RECEIVED',
+              title: 'Payment Received',
+              message: `Payment of £${payment.amount} received via Stripe`,
+              data: { bookingId: payment.bookingId, paymentId: payment.id }
+            });
+          }
+
+          return reply.send({ success: true, status: 'succeeded' });
+        }
+        return reply.send({ success: true, status: 'succeeded', message: 'Already processed' });
+      } else {
+        return reply.send({ success: false, status: paymentIntent.status });
+      }
+    } catch (error) {
+      app.log.error('Payment verification error:', error);
+      return reply.status(500).send({ success: false, error: 'Verification failed' });
     }
   });
 
@@ -3946,84 +3903,7 @@ async function start() {
     }
   });
 
-  // Process payment
-  app.post("/api/payments", { preHandler: [authenticate] }, async (request, reply) => {
-    try {
-      const userId = request.user.userId;
-      const { bookingId, amount, paymentMethod, description } = request.body;
-
-      if (!bookingId || !amount) {
-        return reply.status(400).send({
-          success: false,
-          error: 'Booking ID and amount are required'
-        });
-      }
-
-      const booking = await prisma.booking.findUnique({
-        where: { id: bookingId }
-      });
-
-      if (!booking) {
-        return reply.status(404).send({
-          success: false,
-          error: 'Booking not found'
-        });
-      }
-
-      if (booking.clientId !== userId) {
-        return reply.status(403).send({
-          success: false,
-          error: 'Not authorized to pay for this booking'
-        });
-      }
-
-      const payment = await prisma.$transaction(async (tx) => {
-        const p = await tx.payment.create({
-          data: {
-            bookingId,
-            userId,
-            amount: parseFloat(amount),
-            paymentMethod: paymentMethod || 'CARD',
-            status: 'PAID',
-            description: description || `Payment for booking ${bookingId}`
-          }
-        });
-
-        await tx.booking.update({
-          where: { id: bookingId },
-          data: {
-            paymentStatus: 'PAID',
-            status: 'CONFIRMED'
-          }
-        });
-
-        return p;
-      });
-
-      await prisma.notification.create({
-        data: {
-          userId: booking.vendorId,
-          type: 'PAYMENT_RECEIVED',
-          title: 'Payment Received',
-          message: `Payment of £${amount} received for booking ${bookingId}`,
-          data: { bookingId, paymentId: payment.id }
-        }
-      });
-
-      return reply.send({
-        success: true,
-        message: 'Payment processed successfully',
-        data: { payment }
-      });
-
-    } catch (error) {
-      app.log.error('Process payment error:', error);
-      return reply.status(500).send({
-        success: false,
-        error: 'Internal server error'
-      });
-    }
-  });
+  // Old payment logic removed. Use Stripe endpoints instead.
 
   // Get payment history
   app.get("/api/payments", { preHandler: [authenticate] }, async (request, reply) => {
