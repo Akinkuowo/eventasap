@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     User,
     Mail,
@@ -12,8 +12,14 @@ import {
     MoreHorizontal,
     Search as SearchIcon,
     Loader2,
-    ShieldAlert
+    ShieldAlert,
+    Power,
+    RefreshCw,
+    UserPlus,
+    ChevronRight,
+    Ban
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 
 const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -26,6 +32,7 @@ interface UserData {
     phoneNumber: string;
     activeRole: 'CLIENT' | 'VENDOR' | 'ADMIN';
     emailVerified: boolean;
+    isActive: boolean;
     createdAt: string;
     hasVendorProfile: boolean;
     hasClientProfile: boolean;
@@ -36,9 +43,23 @@ const UserManagement = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterRole, setFilterRole] = useState<'ALL' | 'CLIENT' | 'VENDOR' | 'ADMIN'>('ALL');
+    const [activeDropdownId, setActiveDropdownId] = useState<string | null>(null);
+    const [isActing, setIsActing] = useState<string | null>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         fetchUsers();
+    }, []);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setActiveDropdownId(null);
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
     const fetchUsers = async () => {
@@ -56,6 +77,87 @@ const UserManagement = () => {
             toast.error('Error loading users');
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handleToggleStatus = async (userId: string) => {
+        setIsActing(userId);
+        try {
+            const token = localStorage.getItem('accessToken');
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/admin/users/${userId}/toggle-status`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({})
+            });
+
+            if (!response.ok) throw new Error('Failed to update status');
+            const data = await response.json();
+
+            setUsers(users.map(u => u.id === userId ? { ...u, isActive: data.data.isActive } : u));
+            toast.success(data.message);
+        } catch (error) {
+            toast.error('Error updating user status');
+        } finally {
+            setIsActing(null);
+            setActiveDropdownId(null);
+        }
+    };
+
+    const handleSwitchRole = async (userId: string, newRole: string) => {
+        setIsActing(userId);
+        try {
+            const token = localStorage.getItem('accessToken');
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/admin/users/${userId}/role`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ role: newRole })
+            });
+
+            if (!response.ok) throw new Error('Failed to update role');
+            const data = await response.json();
+
+            setUsers(users.map(u => u.id === userId ? { ...u, activeRole: data.data.activeRole as any } : u));
+            toast.success(data.message);
+        } catch (error) {
+            toast.error('Error updating user role');
+        } finally {
+            setIsActing(null);
+            setActiveDropdownId(null);
+        }
+    };
+
+    const handleResetPassword = async (userId: string) => {
+        if (!confirm('This will set a temporary random password. Continue?')) return;
+
+        setIsActing(userId);
+        try {
+            const token = localStorage.getItem('accessToken');
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/admin/users/${userId}/reset-password`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({})
+            });
+
+            if (!response.ok) throw new Error('Failed to reset password');
+            const data = await response.json();
+
+            toast.success(`Password reset. New temp password: ${data.data.tempPassword}`, {
+                duration: 10000
+            });
+        } catch (error) {
+            toast.error('Error resetting password');
+        } finally {
+            setIsActing(null);
+            setActiveDropdownId(null);
         }
     };
 
@@ -91,8 +193,8 @@ const UserManagement = () => {
                             key={role}
                             onClick={() => setFilterRole(role as any)}
                             className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterRole === role
-                                    ? 'bg-white text-orange-600 shadow-sm'
-                                    : 'text-gray-500 hover:text-gray-700'
+                                ? 'bg-white text-orange-600 shadow-sm'
+                                : 'text-gray-500 hover:text-gray-700'
                                 }`}
                         >
                             {role}
@@ -117,7 +219,7 @@ const UserManagement = () => {
                                     <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Status & Verification</th>
                                     <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Profiles</th>
                                     <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Join Date</th>
-                                    <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Actions</th>
+                                    <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-50">
@@ -142,11 +244,16 @@ const UserManagement = () => {
                                             <div className="flex flex-col space-y-2">
                                                 <div className="flex items-center space-x-2">
                                                     <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter ${user.activeRole === 'ADMIN' ? 'bg-orange-100 text-orange-700' :
-                                                            user.activeRole === 'VENDOR' ? 'bg-purple-100 text-purple-700' :
-                                                                'bg-blue-100 text-blue-700'
+                                                        user.activeRole === 'VENDOR' ? 'bg-purple-100 text-purple-700' :
+                                                            'bg-blue-100 text-blue-700'
                                                         }`}>
                                                         {user.activeRole}
                                                     </span>
+                                                    {!user.isActive && (
+                                                        <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[9px] font-black uppercase tracking-tighter">
+                                                            Disabled
+                                                        </span>
+                                                    )}
                                                     {user.emailVerified && (
                                                         <CheckCircle className="w-3 h-3 text-green-500" />
                                                     )}
@@ -179,10 +286,83 @@ const UserManagement = () => {
                                                 })}
                                             </p>
                                         </td>
-                                        <td className="px-8 py-6">
-                                            <button className="p-2 bg-gray-50 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-all">
-                                                <MoreHorizontal className="w-5 h-5" />
-                                            </button>
+                                        <td className="px-8 py-6 text-right">
+                                            <div className="relative inline-block text-left">
+                                                <button
+                                                    onClick={() => setActiveDropdownId(activeDropdownId === user.id ? null : user.id)}
+                                                    className={`p-2 rounded-xl transition-all ${activeDropdownId === user.id ? 'bg-orange-600 text-white shadow-lg' : 'bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600'}`}
+                                                >
+                                                    <MoreHorizontal className="w-5 h-5" />
+                                                </button>
+
+                                                <AnimatePresence>
+                                                    {activeDropdownId === user.id && (
+                                                        <motion.div
+                                                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                                                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                                                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                                                            ref={dropdownRef}
+                                                            className="absolute right-0 mt-3 w-56 bg-white rounded-2xl shadow-2xl border border-gray-100 p-2 z-50 overflow-hidden"
+                                                        >
+                                                            <div className="px-3 py-2 border-b border-gray-50 mb-1">
+                                                                <p className="text-[10px] uppercase font-black text-gray-400 tracking-widest">Administrative Actions</p>
+                                                            </div>
+
+                                                            <button
+                                                                onClick={() => handleToggleStatus(user.id)}
+                                                                disabled={isActing === user.id}
+                                                                className={`w-full flex items-center justify-between px-3 py-2.5 text-xs font-bold rounded-xl transition-colors ${user.isActive ? 'text-red-600 hover:bg-red-50' : 'text-green-600 hover:bg-green-50'}`}
+                                                            >
+                                                                <div className="flex items-center">
+                                                                    {user.isActive ? <Ban className="w-4 h-4 mr-3" /> : <CheckCircle className="w-4 h-4 mr-3" />}
+                                                                    {user.isActive ? 'Disable Account' : 'Enable Account'}
+                                                                </div>
+                                                                <ChevronRight className="w-3 h-3 opacity-30" />
+                                                            </button>
+
+                                                            {user.activeRole !== 'VENDOR' && (
+                                                                <button
+                                                                    onClick={() => handleSwitchRole(user.id, 'VENDOR')}
+                                                                    disabled={isActing === user.id}
+                                                                    className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
+                                                                >
+                                                                    <div className="flex items-center">
+                                                                        <UserPlus className="w-4 h-4 mr-3 text-purple-600" />
+                                                                        Make Vendor
+                                                                    </div>
+                                                                    <ChevronRight className="w-3 h-3 opacity-30" />
+                                                                </button>
+                                                            )}
+
+                                                            {user.activeRole !== 'CLIENT' && (
+                                                                <button
+                                                                    onClick={() => handleSwitchRole(user.id, 'CLIENT')}
+                                                                    disabled={isActing === user.id}
+                                                                    className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
+                                                                >
+                                                                    <div className="flex items-center">
+                                                                        <User className="w-4 h-4 mr-3 text-blue-600" />
+                                                                        Make Client
+                                                                    </div>
+                                                                    <ChevronRight className="w-3 h-3 opacity-30" />
+                                                                </button>
+                                                            )}
+
+                                                            <button
+                                                                onClick={() => handleResetPassword(user.id)}
+                                                                disabled={isActing === user.id}
+                                                                className="w-full flex items-center justify-between px-3 py-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
+                                                            >
+                                                                <div className="flex items-center">
+                                                                    <RefreshCw className={`w-4 h-4 mr-3 text-orange-600 ${isActing === user.id ? 'animate-spin' : ''}`} />
+                                                                    Reset Password
+                                                                </div>
+                                                                <ChevronRight className="w-3 h-3 opacity-30" />
+                                                            </button>
+                                                        </motion.div>
+                                                    )}
+                                                </AnimatePresence>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}

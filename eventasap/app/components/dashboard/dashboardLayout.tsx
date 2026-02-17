@@ -43,12 +43,19 @@ const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL;
 const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [user, setUser] = useState<any>(null);
+    const [stats, setStats] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(true);
     const router = useRouter();
 
     // Fetch user data on mount
     useEffect(() => {
-        fetchUserData();
+        const init = async () => {
+            const userData = await fetchUserData();
+            if (userData && userData.activeRole !== 'ADMIN') {
+                fetchStats();
+            }
+        };
+        init();
     }, []);
 
     const fetchUserData = async () => {
@@ -56,7 +63,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             const token = localStorage.getItem('accessToken');
             if (!token) {
                 router.push('/login');
-                return;
+                return null;
             }
 
             const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/auth/me`, {
@@ -74,11 +81,31 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
             // Store user in localStorage for quick access
             localStorage.setItem('user', JSON.stringify(data.data.user));
+            return data.data.user;
         } catch (error) {
             toast.error('Session expired. Please login again.');
             router.push('/login');
+            return null;
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const fetchStats = async () => {
+        try {
+            const token = localStorage.getItem('accessToken');
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/dashboard/stats`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setStats(data.data);
+            }
+        } catch (error) {
+            console.error('Error fetching stats:', error);
         }
     };
 
@@ -260,7 +287,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                                     </div>
                                 </div>
 
-                                <RoleSwitcher user={user} />
+                                {user?.activeRole !== 'ADMIN' && <RoleSwitcher user={user} />}
                             </div>
                         )}
                     </div>
@@ -335,27 +362,27 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
                                 {/* Quick Stats */}
                                 <div className="hidden lg:flex items-center space-x-6">
-                                    {user?.activeRole === 'VENDOR' && (
+                                    {user?.activeRole === 'VENDOR' && stats && (
                                         <>
                                             <div className="text-center">
-                                                <div className="text-lg font-bold text-gray-900">£2,450</div>
+                                                <div className="text-lg font-bold text-gray-900">£{stats.thisMonthRevenue?.toLocaleString() || '0'}</div>
                                                 <div className="text-xs text-gray-500">This Month</div>
                                             </div>
                                             <div className="text-center">
-                                                <div className="text-lg font-bold text-gray-900">12</div>
+                                                <div className="text-lg font-bold text-gray-900">{stats.totalBookings || '0'}</div>
                                                 <div className="text-xs text-gray-500">Bookings</div>
                                             </div>
                                         </>
                                     )}
 
-                                    {user?.activeRole === 'CLIENT' && (
+                                    {user?.activeRole === 'CLIENT' && stats && (
                                         <>
                                             <div className="text-center">
-                                                <div className="text-lg font-bold text-gray-900">3</div>
+                                                <div className="text-lg font-bold text-gray-900">{stats.upcomingBookings || '0'}</div>
                                                 <div className="text-xs text-gray-500">Upcoming</div>
                                             </div>
                                             <div className="text-center">
-                                                <div className="text-lg font-bold text-gray-900">£850</div>
+                                                <div className="text-lg font-bold text-gray-900">£{stats.amountToPay?.toLocaleString() || '0'}</div>
                                                 <div className="text-xs text-gray-500">To Pay</div>
                                             </div>
                                         </>

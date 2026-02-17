@@ -52,10 +52,16 @@ export default function DashboardPage() {
             }
 
             const data = await response.json();
-            setUser(data.data.user);
+            const userData = data.data.user;
+            setUser(userData);
 
             // Store user in localStorage for quick access
-            localStorage.setItem('user', JSON.stringify(data.data.user));
+            localStorage.setItem('user', JSON.stringify(userData));
+
+            // Redirect if admin
+            if (userData.activeRole === 'ADMIN') {
+                router.push('/dashboard/admin');
+            }
         } catch (error) {
             toast.error('Session expired. Please login again.');
             router.push('/login');
@@ -75,16 +81,6 @@ export default function DashboardPage() {
         upcomingEvents: 0
     });
 
-    // Mock data - in real app, fetch from API
-    // const stats = {
-    //     totalBookings: 12,
-    //     pendingBookings: 3,
-    //     completedBookings: 9,
-    //     totalRevenue: 2450,
-    //     avgRating: 4.8,
-    //     activeClients: 8,
-    //     upcomingEvents: 4
-    // };
 
     const fetchStats = async () => {
         try {
@@ -126,23 +122,81 @@ export default function DashboardPage() {
     useEffect(() => {
         if (user) {
             fetchStats();
+            fetchNotifications();
+            fetchAIInsights();
         }
     }, [user]);
 
     const [recentBookings, setRecentBookings] = useState<any[]>([]);
 
     const quickActions = [
-        { title: 'Create New Package', icon: Package, href: '/dashboard/packages/new', color: 'bg-purple-100 text-purple-600' },
+        { title: 'Create New Package', icon: Package, href: '/dashboard/packages', color: 'bg-purple-100 text-purple-600' },
         { title: 'View Calendar', icon: Calendar, href: '/dashboard/bookings', color: 'bg-blue-100 text-blue-600' },
         { title: 'Analytics Report', icon: TrendingUp, href: '/dashboard/analytics', color: 'bg-green-100 text-green-600' },
         { title: 'Manage Clients', icon: Users, href: '/dashboard/clients', color: 'bg-orange-100 text-orange-600' },
     ];
 
-    const notifications = [
-        { id: 1, message: 'New booking request from Sarah Johnson', time: '2 hours ago', type: 'booking' },
-        { id: 2, message: 'Payment received for wedding photography', time: '1 day ago', type: 'payment' },
-        { id: 3, message: 'Your vendor profile is now verified!', time: '2 days ago', type: 'success' },
-    ];
+    const [notifications, setNotifications] = useState<any[]>([]);
+    const [aiInsights, setAiInsights] = useState<any[]>([]);
+    const [isAILoading, setIsAILoading] = useState(true);
+
+    const fetchAIInsights = async () => {
+        try {
+            setIsAILoading(true);
+            const token = localStorage.getItem('accessToken');
+            if (!token) return;
+
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/dashboard/ai-insights`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success) {
+                    setAiInsights(data.data);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to fetch AI insights:', error);
+        } finally {
+            setIsAILoading(false);
+        }
+    };
+
+    const fetchNotifications = async () => {
+        try {
+            const token = localStorage.getItem('accessToken');
+            if (!token) return;
+
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/notifications?limit=5`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success) {
+                    setNotifications(data.data.notifications);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to fetch notifications:', error);
+        }
+    };
+
+    const formatTime = (dateString: string) => {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+        if (diffInSeconds < 60) return 'Just now';
+        if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+        if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+        return `${Math.floor(diffInSeconds / 86400)}d ago`;
+    };
 
     // Show loading state while fetching user data
     if (isLoading) {
@@ -326,21 +380,25 @@ export default function DashboardPage() {
                             </div>
                         </div>
 
-                        {/* Notifications */}
                         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
                             <h2 className="text-lg font-bold text-gray-900 mb-4">Notifications</h2>
                             <div className="space-y-4">
-                                {notifications.map((notification) => (
-                                    <div key={notification.id} className="flex items-start space-x-3">
-                                        <div className={`w-2 h-2 mt-2 rounded-full ${notification.type === 'booking' ? 'bg-blue-500' :
-                                            notification.type === 'payment' ? 'bg-green-500' : 'bg-purple-500'
-                                            }`}></div>
-                                        <div className="flex-1">
-                                            <p className="text-sm text-gray-900">{notification.message}</p>
-                                            <p className="text-xs text-gray-500 mt-1">{notification.time}</p>
+                                {notifications.length > 0 ? (
+                                    notifications.map((notification) => (
+                                        <div key={notification.id} className="flex items-start space-x-3">
+                                            <div className={`w-2 h-2 mt-2 rounded-full ${notification.type?.includes('BOOKING') ? 'bg-blue-500' :
+                                                notification.type?.includes('PAYMENT') ? 'bg-green-500' :
+                                                    'bg-purple-500'
+                                                }`}></div>
+                                            <div className="flex-1">
+                                                <p className="text-sm text-gray-900">{notification.message}</p>
+                                                <p className="text-xs text-gray-500 mt-1">{formatTime(notification.createdAt)}</p>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    ))
+                                ) : (
+                                    <p className="text-sm text-gray-500 text-center py-4">No new notifications</p>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -358,26 +416,42 @@ export default function DashboardPage() {
                                 <p className="text-sm text-gray-600">Personalized recommendations for your business</p>
                             </div>
                         </div>
-                        <button className="px-4 py-2 bg-white border border-orange-300 text-orange-600 font-medium rounded-xl hover:bg-orange-50 transition-colors">
-                            View All Insights
+                        <button
+                            onClick={() => fetchAIInsights()}
+                            className="px-4 py-2 bg-white border border-orange-300 text-orange-600 font-medium rounded-xl hover:bg-orange-50 transition-colors disabled:opacity-50"
+                            disabled={isAILoading}
+                        >
+                            {isAILoading ? 'Analyzing...' : 'Refresh Insights'}
                         </button>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="bg-white p-4 rounded-xl border border-gray-200">
-                            <h4 className="font-semibold text-gray-900 mb-2">Pricing Optimization</h4>
-                            <p className="text-sm text-gray-600 mb-3">Increase your photography package by 15% based on market demand</p>
-                            <button className="text-sm font-medium text-orange-600 hover:text-orange-700">
-                                Apply Suggestion →
-                            </button>
-                        </div>
-                        <div className="bg-white p-4 rounded-xl border border-gray-200">
-                            <h4 className="font-semibold text-gray-900 mb-2">Availability Boost</h4>
-                            <p className="text-sm text-gray-600 mb-3">Open December weekends for 20% higher bookings</p>
-                            <button className="text-sm font-medium text-orange-600 hover:text-orange-700">
-                                Update Calendar →
-                            </button>
-                        </div>
+                        {isAILoading ? (
+                            Array(2).fill(0).map((_, i) => (
+                                <div key={i} className="bg-white p-4 rounded-xl border border-gray-200 animate-pulse">
+                                    <div className="h-5 bg-gray-100 rounded w-1/3 mb-2"></div>
+                                    <div className="h-4 bg-gray-100 rounded w-full mb-3"></div>
+                                    <div className="h-4 bg-gray-100 rounded w-1/4"></div>
+                                </div>
+                            ))
+                        ) : (
+                            aiInsights.map((insight, index) => (
+                                <div key={index} className="bg-white p-4 rounded-xl border border-gray-200 hover:shadow-md transition-shadow">
+                                    <h4 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                                        {insight.title}
+                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${insight.type === 'Optimization' ? 'bg-blue-100 text-blue-600' :
+                                                insight.type === 'Boost' ? 'bg-green-100 text-green-600' : 'bg-orange-100 text-orange-600'
+                                            }`}>
+                                            {insight.type}
+                                        </span>
+                                    </h4>
+                                    <p className="text-sm text-gray-600 mb-3">{insight.description}</p>
+                                    <button className="text-sm font-medium text-orange-600 hover:text-orange-700 flex items-center gap-1">
+                                        {insight.action} <ArrowUpRight className="w-3 h-3" />
+                                    </button>
+                                </div>
+                            ))
+                        )}
                     </div>
                 </div>
             </div>

@@ -16,9 +16,12 @@ import {
     Shield,
     Calendar,
     ArrowUpRight,
-    Loader2
+    Loader2,
+    User,
+    Briefcase
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -50,6 +53,12 @@ const VendorManagement = () => {
     const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
     const [isActionLoading, setIsActionLoading] = useState(false);
 
+    // Unified Action Modal State
+    const [isActionModalOpen, setIsActionModalOpen] = useState(false);
+    const [actionInput, setActionInput] = useState('');
+    const [activeAction, setActiveAction] = useState<'REJECT' | 'SUSPEND' | 'UNSUSPEND' | 'APPROVE' | null>(null);
+    const [targetVendorId, setTargetVendorId] = useState<string | null>(null);
+
     useEffect(() => {
         fetchVendors();
     }, [activeTab]);
@@ -76,53 +85,91 @@ const VendorManagement = () => {
         }
     };
 
-    const handleApprove = async (vendorId: string) => {
-        if (!confirm('Are you sure you want to approve this vendor?')) return;
-        setIsActionLoading(true);
-        try {
-            const token = localStorage.getItem('accessToken');
-            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/admin/vendors/${vendorId}/approve`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ notes: 'Profile looks good and business proof verified.' })
-            });
-
-            if (!response.ok) throw new Error('Approval failed');
-            toast.success('Vendor approved successfully');
-            fetchVendors();
-            setSelectedVendor(null);
-        } catch (error) {
-            toast.error('Could not approve vendor');
-        } finally {
-            setIsActionLoading(false);
-        }
+    const handleApprove = (vendorId: string) => {
+        setTargetVendorId(vendorId);
+        setActiveAction('APPROVE');
+        setActionInput('');
+        setIsActionModalOpen(true);
     };
 
-    const handleReject = async (vendorId: string) => {
-        const reason = prompt('Please enter rejection reason:');
-        if (!reason) return;
+    const handleReject = (vendorId: string) => {
+        setTargetVendorId(vendorId);
+        setActiveAction('REJECT');
+        setActionInput('');
+        setIsActionModalOpen(true);
+    };
+
+    const handleSuspend = (vendorId: string) => {
+        setTargetVendorId(vendorId);
+        setActiveAction('SUSPEND');
+        setActionInput('');
+        setIsActionModalOpen(true);
+    };
+
+    const handleUnsuspend = (vendorId: string) => {
+        setTargetVendorId(vendorId);
+        setActiveAction('UNSUSPEND');
+        setActionInput('');
+        setIsActionModalOpen(true);
+    };
+
+    const handleConfirmAction = async () => {
+        if (!targetVendorId || !activeAction) return;
+
+        // Validation for actions requiring reasons
+        if ((activeAction === 'REJECT' || activeAction === 'SUSPEND') && !actionInput.trim()) {
+            toast.error('Please provide a reason');
+            return;
+        }
 
         setIsActionLoading(true);
         try {
             const token = localStorage.getItem('accessToken');
-            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/admin/vendors/${vendorId}/reject`, {
+            let endpoint = '';
+            let body = {};
+
+            switch (activeAction) {
+                case 'APPROVE':
+                    endpoint = `${NEXT_PUBLIC_API_URL}/api/admin/vendors/${targetVendorId}/approve`;
+                    body = { notes: 'Profile looks good and business proof verified.' };
+                    break;
+                case 'REJECT':
+                    endpoint = `${NEXT_PUBLIC_API_URL}/api/admin/vendors/${targetVendorId}/reject`;
+                    body = { reason: actionInput };
+                    break;
+                case 'SUSPEND':
+                    endpoint = `${NEXT_PUBLIC_API_URL}/api/admin/vendors/${targetVendorId}/suspend`;
+                    body = { reason: actionInput };
+                    break;
+                case 'UNSUSPEND':
+                    endpoint = `${NEXT_PUBLIC_API_URL}/api/admin/vendors/${targetVendorId}/unsuspend`;
+                    break;
+            }
+
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ reason })
+                body: JSON.stringify(body)
             });
 
-            if (!response.ok) throw new Error('Rejection failed');
-            toast.success('Vendor profile rejected');
+            if (!response.ok) throw new Error(`${activeAction} action failed`);
+
+            const successMessages = {
+                'APPROVE': 'Vendor approved successfully',
+                'REJECT': 'Vendor profile rejected',
+                'SUSPEND': 'Vendor account suspended',
+                'UNSUSPEND': 'Vendor account reinstated'
+            };
+
+            toast.success(successMessages[activeAction]);
             fetchVendors();
+            setIsActionModalOpen(false);
             setSelectedVendor(null);
         } catch (error) {
-            toast.error('Could not reject vendor');
+            toast.error(`Could not complete ${activeAction.toLowerCase()} action`);
         } finally {
             setIsActionLoading(false);
         }
@@ -132,7 +179,6 @@ const VendorManagement = () => {
         v.businessName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         v.user.email.toLowerCase().includes(searchTerm.toLowerCase())
     );
-
     return (
         <div className="space-y-6">
             {/* Tabs & Search */}
@@ -189,8 +235,9 @@ const VendorManagement = () => {
                                         <Briefcase className="w-6 h-6 text-slate-400 group-hover:text-orange-500" />
                                     </div>
                                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${vendor.status === 'APPROVED' ? 'bg-green-100 text-green-700' :
-                                            vendor.status === 'PENDING' ? 'bg-orange-100 text-orange-700' :
-                                                'bg-red-100 text-red-700'
+                                        vendor.status === 'PENDING' ? 'bg-orange-100 text-orange-700' :
+                                            vendor.status === 'SUSPENDED' ? 'bg-red-100 text-red-700 font-black italic' :
+                                                'bg-gray-100 text-gray-700'
                                         }`}>
                                         {vendor.status}
                                     </span>
@@ -227,8 +274,27 @@ const VendorManagement = () => {
                                         <button
                                             onClick={() => handleApprove(vendor.id)}
                                             className="p-3 bg-green-500 text-white rounded-xl hover:bg-green-600 transition-all shadow-lg shadow-green-100"
+                                            title="Approve Vendor"
                                         >
                                             <CheckCircle className="w-4 h-4" />
+                                        </button>
+                                    )}
+                                    {vendor.status === 'SUSPENDED' && (
+                                        <button
+                                            onClick={() => handleUnsuspend(vendor.id)}
+                                            className="p-3 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-all shadow-lg shadow-blue-100"
+                                            title="Unsuspend Vendor"
+                                        >
+                                            <Shield className="w-4 h-4" />
+                                        </button>
+                                    )}
+                                    {vendor.status === 'APPROVED' && (
+                                        <button
+                                            onClick={() => handleSuspend(vendor.id)}
+                                            className="p-3 bg-red-100 text-red-600 rounded-xl hover:bg-red-200 transition-all"
+                                            title="Suspend Vendor"
+                                        >
+                                            <AlertCircle className="w-4 h-4" />
                                         </button>
                                     )}
                                 </div>
@@ -324,7 +390,7 @@ const VendorManagement = () => {
                                 </div>
                             </div>
 
-                            {selectedVendor.status === 'PENDING' && (
+                            {selectedVendor.status === 'PENDING' ? (
                                 <div className="flex gap-4 border-t border-gray-100 pt-8">
                                     <button
                                         disabled={isActionLoading}
@@ -343,11 +409,114 @@ const VendorManagement = () => {
                                         Approve Vendor
                                     </button>
                                 </div>
+                            ) : selectedVendor.status === 'SUSPENDED' ? (
+                                <div className="flex gap-4 border-t border-gray-100 pt-8">
+                                    <button
+                                        disabled={isActionLoading}
+                                        onClick={() => handleUnsuspend(selectedVendor.id)}
+                                        className="flex-1 py-4 bg-blue-600 text-white font-black rounded-2xl hover:shadow-xl transition-all uppercase tracking-widest text-xs flex items-center justify-center"
+                                    >
+                                        {isActionLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Shield className="w-4 h-4 mr-2" />}
+                                        Lift Suspension
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="flex gap-4 border-t border-gray-100 pt-8">
+                                    <button
+                                        disabled={isActionLoading}
+                                        onClick={() => handleSuspend(selectedVendor.id)}
+                                        className="flex-1 py-4 bg-red-50 text-red-600 font-black rounded-2xl hover:bg-red-100 transition-all uppercase tracking-widest text-xs flex items-center justify-center"
+                                    >
+                                        {isActionLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <AlertCircle className="w-4 h-4 mr-2" />}
+                                        Suspend Account
+                                    </button>
+                                </div>
                             )}
                         </div>
                     </div>
                 </div>
             )}
+
+            {/* Unified Action Modal */}
+            <AnimatePresence>
+                {isActionModalOpen && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setIsActionModalOpen(false)}
+                            className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+                        />
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                            className="bg-white rounded-[40px] w-full max-w-md relative shadow-2xl overflow-hidden"
+                        >
+                            <div className={`h-2 w-full ${activeAction === 'REJECT' || activeAction === 'SUSPEND' ? 'bg-red-500' :
+                                activeAction === 'UNSUSPEND' ? 'bg-blue-600' : 'bg-green-500'
+                                }`} />
+
+                            <div className="p-10 text-center">
+                                <div className={`w-20 h-20 rounded-3xl mx-auto mb-6 flex items-center justify-center ${activeAction === 'REJECT' || activeAction === 'SUSPEND' ? 'bg-red-50 text-red-500' :
+                                    activeAction === 'UNSUSPEND' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-500'
+                                    }`}>
+                                    {activeAction === 'UNSUSPEND' ? (
+                                        <Shield className="w-10 h-10" />
+                                    ) : activeAction === 'APPROVE' ? (
+                                        <CheckCircle className="w-10 h-10" />
+                                    ) : (
+                                        <AlertCircle className="w-10 h-10" />
+                                    )}
+                                </div>
+
+                                <h3 className="text-2xl font-black text-slate-900 uppercase mb-2 tracking-tight">
+                                    {activeAction === 'REJECT' ? 'Reject Application' :
+                                        activeAction === 'SUSPEND' ? 'Suspend Account' :
+                                            activeAction === 'UNSUSPEND' ? 'Reinstate Account' : 'Approve Vendor'}
+                                </h3>
+                                <p className="text-slate-500 font-medium text-sm mb-8">
+                                    {activeAction === 'REJECT' || activeAction === 'SUSPEND'
+                                        ? 'Please provide a detailed reason for this action. The vendor will be notified.'
+                                        : `Confirm that you want to ${activeAction === 'UNSUSPEND' ? 'reinstate' : 'approve'} this vendor profile.`}
+                                </p>
+
+                                {(activeAction === 'REJECT' || activeAction === 'SUSPEND') && (
+                                    <div className="relative mb-8">
+                                        <textarea
+                                            autoFocus
+                                            value={actionInput}
+                                            onChange={(e) => setActionInput(e.target.value)}
+                                            placeholder="Type reason here..."
+                                            className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-[32px] text-sm h-32 focus:ring-4 focus:ring-slate-100 focus:border-slate-200 transition-all resize-none font-medium placeholder:text-slate-300"
+                                        />
+                                    </div>
+                                )}
+
+                                <div className="flex flex-col gap-3">
+                                    <button
+                                        disabled={isActionLoading || ((activeAction === 'REJECT' || activeAction === 'SUSPEND') && !actionInput.trim())}
+                                        onClick={handleConfirmAction}
+                                        className={`w-full py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl transition-all flex items-center justify-center ${activeAction === 'REJECT' || activeAction === 'SUSPEND' ? 'bg-red-500 text-white shadow-red-200 hover:bg-red-600' :
+                                            activeAction === 'UNSUSPEND' ? 'bg-blue-600 text-white shadow-blue-200 hover:bg-blue-700' :
+                                                'bg-green-500 text-white shadow-green-200 hover:bg-green-600'
+                                            } disabled:opacity-50 disabled:shadow-none`}
+                                    >
+                                        {isActionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Action'}
+                                    </button>
+                                    <button
+                                        onClick={() => setIsActionModalOpen(false)}
+                                        className="w-full py-4 text-slate-400 font-bold uppercase tracking-widest text-xs hover:text-slate-600 transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 };

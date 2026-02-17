@@ -318,6 +318,10 @@ const vendorRejectionSchema = z.object({
   reason: z.string().min(10, 'Rejection reason must be at least 10 characters')
 });
 
+const vendorSuspensionSchema = z.object({
+  reason: z.string()
+});
+
 // Generate JWT tokens
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
@@ -1665,6 +1669,7 @@ async function start() {
           phoneNumber: true,
           activeRole: true,
           emailVerified: true,
+          isActive: true,
           createdAt: true,
           hasVendorProfile: true,
           hasClientProfile: true
@@ -1683,6 +1688,113 @@ async function start() {
         success: false,
         error: 'Internal server error'
       });
+    }
+  });
+
+  // Admin: Toggle user status (Activate/Deactivate)
+  app.post("/api/admin/users/:targetUserId/toggle-status", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { targetUserId } = request.params;
+
+      const admin = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!admin || admin.activeRole !== 'ADMIN') {
+        return reply.status(403).send({ success: false, error: 'Admin access required' });
+      }
+
+      const targetUser = await prisma.user.findUnique({
+        where: { id: targetUserId }
+      });
+
+      if (!targetUser) {
+        return reply.status(404).send({ success: false, error: 'User not found' });
+      }
+
+      const updatedUser = await prisma.user.update({
+        where: { id: targetUserId },
+        data: { isActive: !targetUser.isActive }
+      });
+
+      return reply.send({
+        success: true,
+        message: `User account ${updatedUser.isActive ? 'activated' : 'deactivated'} successfully`,
+        data: { isActive: updatedUser.isActive }
+      });
+    } catch (error) {
+      app.log.error('Toggle status error:', error);
+      return reply.status(500).send({ success: false, error: 'Internal server error' });
+    }
+  });
+
+  // Admin: Switch user role
+  app.post("/api/admin/users/:targetUserId/role", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { targetUserId } = request.params;
+      const { role } = request.body;
+
+      if (!['CLIENT', 'VENDOR', 'ADMIN'].includes(role)) {
+        return reply.status(400).send({ success: false, error: 'Invalid role' });
+      }
+
+      const admin = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!admin || admin.activeRole !== 'ADMIN') {
+        return reply.status(403).send({ success: false, error: 'Admin access required' });
+      }
+
+      const updatedUser = await prisma.user.update({
+        where: { id: targetUserId },
+        data: { activeRole: role }
+      });
+
+      return reply.send({
+        success: true,
+        message: `User role updated to ${role} successfully`,
+        data: { activeRole: updatedUser.activeRole }
+      });
+    } catch (error) {
+      app.log.error('Switch role error:', error);
+      return reply.status(500).send({ success: false, error: 'Internal server error' });
+    }
+  });
+
+  // Admin: Reset user password (Set to a temporary random password)
+  app.post("/api/admin/users/:targetUserId/reset-password", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { targetUserId } = request.params;
+
+      const admin = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!admin || admin.activeRole !== 'ADMIN') {
+        return reply.status(403).send({ success: false, error: 'Admin access required' });
+      }
+
+      const tempPassword = Math.random().toString(36).slice(-8);
+      const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+      await prisma.user.update({
+        where: { id: targetUserId },
+        data: { password: hashedPassword }
+      });
+
+      // In a real app, you would send this via email. For now, we return it to the admin.
+      return reply.send({
+        success: true,
+        message: 'Password reset successfully',
+        data: { tempPassword }
+      });
+    } catch (error) {
+      app.log.error('Reset password error:', error);
+      return reply.status(500).send({ success: false, error: 'Internal server error' });
     }
   });
 
@@ -1710,17 +1822,47 @@ async function start() {
         include: {
           booking: {
             include: {
-              vendor: true,
-              client: true
+              vendorProfile: {
+                select: {
+                  businessName: true,
+                  billingDetails: true
+                }
+              },
+              vendor: {
+                include: {
+                  vendorProfile: {
+                    select: {
+                      businessName: true,
+                      billingDetails: true
+                    }
+                  }
+                }
+              },
+              client: {
+                select: {
+                  firstName: true,
+                  lastName: true,
+                  email: true
+                }
+              }
             }
           }
         },
         orderBy: { createdAt: 'desc' }
       });
 
+      // Map payments to ensure vendorProfile is always present on the booking
+      const mappedPayments = payments.map(p => {
+        const booking = p.booking;
+        if (!booking.vendorProfile && booking.vendor?.vendorProfile) {
+          booking.vendorProfile = booking.vendor.vendorProfile;
+        }
+        return p;
+      });
+
       return reply.send({
         success: true,
-        data: { payments }
+        data: { payments: mappedPayments }
       });
 
     } catch (error) {
@@ -1771,7 +1913,7 @@ async function start() {
       const updatedPayment = await prisma.payment.update({
         where: { id: paymentId },
         data: {
-          payoutStatus: 'RELEASED',
+          payoutStatus: 'RELEASED_TO_VENDOR',
           payoutDate: new Date()
         }
       });
@@ -1781,8 +1923,8 @@ async function start() {
         data: {
           userId: payment.booking.vendorId,
           type: 'PAYMENT_RELEASED',
-          title: 'Payment Released! 💸',
-          message: `Your payout for booking #${payment.booking.id.slice(-6).toUpperCase()} has been released and will be credited to your account shortly.`,
+          title: 'Initial Payment Released! 💸',
+          message: `70% payment for your service for booking #${payment.booking.id.slice(-6).toUpperCase()} has been authorized and paid to your bank account. The remaining 30% will be paid once the service is completed and confirmed by you.`,
           data: { paymentId, bookingId: payment.bookingId }
         }
       });
@@ -2776,19 +2918,25 @@ async function start() {
         return reply.status(404).send({ success: false, error: 'User not found' });
       }
 
+      const now = new Date();
+      const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
       let stats = {
         totalRevenue: 0,
+        thisMonthRevenue: 0,
         totalBookings: 0,
         pendingBookings: 0,
         completedBookings: 0,
+        upcomingBookings: 0,
         averageRating: 0,
         activeClients: 0, // For vendors
         activeVendors: 0, // For clients
-        totalSpent: 0 // For clients
+        totalSpent: 0, // For clients
+        amountToPay: 0 // For clients
       };
 
       if (user.activeRole === 'VENDOR') {
-        // Fetch vendor's bookings (bookings have vendorId that references User.id)
+        // Fetch vendor's bookings
         const bookings = await prisma.booking.findMany({
           where: { vendorId: userId },
           include: {
@@ -2812,11 +2960,22 @@ async function start() {
         stats.totalBookings = bookings.length;
         stats.pendingBookings = bookings.filter(b => b.status === 'PENDING').length;
         stats.completedBookings = bookings.filter(b => b.status === 'COMPLETED').length;
+        stats.upcomingBookings = bookings.filter(b =>
+          (b.status === 'CONFIRMED' || b.status === 'PENDING') &&
+          new Date(b.eventDate) >= now
+        ).length;
 
-        // Calculate revenue from payments
-        stats.totalRevenue = bookings.reduce((sum, b) => {
-          return sum + b.payments.reduce((pSum, p) => p.status === 'PAID' ? pSum + p.amount : pSum, 0);
-        }, 0);
+        // Calculate revenue
+        bookings.forEach(b => {
+          b.payments.forEach(p => {
+            if (p.status === 'PAID') {
+              stats.totalRevenue += p.amount;
+              if (new Date(p.createdAt) >= firstDayOfMonth) {
+                stats.thisMonthRevenue += p.amount;
+              }
+            }
+          });
+        });
 
         // Calculate average rating from reviews
         const reviews = bookings.filter(b => b.review).map(b => b.review);
@@ -2848,11 +3007,24 @@ async function start() {
         stats.totalBookings = bookings.length;
         stats.pendingBookings = bookings.filter(b => b.status === 'PENDING').length;
         stats.completedBookings = bookings.filter(b => b.status === 'COMPLETED').length;
+        stats.upcomingBookings = bookings.filter(b =>
+          (b.status === 'CONFIRMED' || b.status === 'PENDING') &&
+          new Date(b.eventDate) >= now
+        ).length;
 
-        // Calculate total spent
-        stats.totalSpent = bookings.reduce((sum, b) => {
-          return sum + b.payments.reduce((pSum, p) => p.status === 'PAID' ? pSum + p.amount : pSum, 0);
-        }, 0);
+        // Calculate total spent and amount to pay
+        bookings.forEach(b => {
+          const totalPaid = b.payments.reduce((pSum, p) => p.status === 'PAID' ? pSum + p.amount : pSum, 0);
+          stats.totalSpent += totalPaid;
+
+          if (b.status !== 'CANCELLED' && b.status !== 'REJECTED') {
+            const price = b.adjustedPrice || b.quotedPrice || b.budget;
+            const remaining = price - totalPaid;
+            if (remaining > 0) {
+              stats.amountToPay += remaining;
+            }
+          }
+        });
 
         // Active vendors
         const uniqueVendors = new Set(bookings.map(b => b.vendorId));
@@ -2869,6 +3041,122 @@ async function start() {
       return reply.status(500).send({
         success: false,
         error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get AI Dashboard Insights
+  app.get("/api/dashboard/ai-insights", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+
+      if (!user) return reply.status(404).send({ success: false, error: 'User not found' });
+
+      // Fetch basic performance data to feed AI
+      const bookings = await prisma.booking.findMany({
+        where: user.activeRole === 'VENDOR' ? { vendorId: userId } : { clientId: userId },
+        include: { review: true }
+      });
+
+      const totalBookings = bookings.length;
+      const completedBookings = bookings.filter(b => ['COMPLETED', 'CONFIRMED'].includes(b.status)).length;
+      const reviews = bookings.map(b => b.review).filter(Boolean);
+      const avgRating = reviews.length > 0 ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length : 0;
+
+      // Construct Prompt
+      const prompt = `You are an expert event business consultant for EventASAP. 
+      Analyze this ${user.activeRole} dashboard data and provide 2 distinct, highly actionable AI-powered business insights.
+      
+      User Data:
+      - Role: ${user.activeRole}
+      - Total Bookings: ${totalBookings}
+      - Completed/Confirmed: ${completedBookings}
+      - Avg Rating: ${avgRating.toFixed(1)}/5
+      - Member Since: ${user.createdAt}
+
+      Return ONLY a JSON array of 2 objects with this exact structure:
+      [
+        {
+          "title": "Short catchy title",
+          "description": "Insightful 1-sentence explanation",
+          "type": "Optimization" (or "Boost" or "Alert"),
+          "action": "Call to action label"
+        }
+      ]`;
+
+      const geminiApiKey = process.env.GEMINI_API_KEY;
+      if (!geminiApiKey) {
+        // Fallback for demo if API key is missing
+        return reply.send({
+          success: true,
+          data: [
+            {
+              title: "Review Optimization",
+              description: "You have several pending reviews. Following up with clients can boost your profile visibility.",
+              type: "Optimization",
+              action: "Send Reminders"
+            },
+            {
+              title: "Peak Season Prep",
+              description: "Booking requests are increasing for December. Consider updating your availability.",
+              type: "Boost",
+              action: "Update Calendar"
+            }
+          ]
+        });
+      }
+
+      // Call Gemini API
+      const response = await fetch(\`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=\${geminiApiKey}\`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { 
+            response_mime_type: "application/json"
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(\`Gemini API error: \${response.status}\`);
+      }
+
+      const result = await response.json();
+      const aiResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      let insights = [];
+      try {
+        insights = aiResponse ? JSON.parse(aiResponse) : [];
+      } catch (e) {
+        app.log.error('Failed to parse Gemini response:', aiResponse);
+        insights = [];
+      }
+
+      return reply.send({
+        success: true,
+        data: insights
+      });
+
+    } catch (error) {
+      app.log.error('AI Insights Error:', error);
+      return reply.send({
+        success: true,
+        data: [
+          {
+            title: "Performance Insight",
+            description: "Based on your recent activity, maintaining a fast response rate will help convert more leads.",
+            type: "Optimization",
+            action: "Review Response Time"
+          },
+          {
+             title: "Profile Visibility",
+             description: "Updating your portfolio with recent high-quality photos can attract more high-budget clients.",
+             type: "Boost",
+             action: "Upload Photos"
+          }
+        ]
       });
     }
   });
@@ -2915,7 +3203,7 @@ async function start() {
             userId: booking.clientId,
             type: 'BOOKING_STATUS_UPDATE',
             title: 'Booking Status Updated',
-            message: `Your booking status has been updated to ${data.status}`,
+            message: `Your booking status has been updated to ${ data.status }`,
             data: { bookingId: booking.id, status: data.status }
           }
         });
@@ -3011,8 +3299,8 @@ async function start() {
         userId: booking.clientId,
         type: 'PRICE_ADJUSTED',
         title: 'Price Adjustment for Your Booking',
-        message: `The vendor has adjusted the price to £${adjustedPrice.toFixed(2)}. ${priceAdjustmentReason ? 'Reason: ' + priceAdjustmentReason : ''}`,
-        actionUrl: `/dashboard/bookings/${id}`,
+        message: `The vendor has adjusted the price to £${ adjustedPrice.toFixed(2) }.${ priceAdjustmentReason? 'Reason: ' + priceAdjustmentReason : ''}`,
+        actionUrl: `/ dashboard / bookings / ${ id }`,
         data: { bookingId: id, adjustedPrice, priceAdjustmentReason }
       });
 
@@ -3076,8 +3364,8 @@ async function start() {
         userId: booking.vendorId,
         type: 'PRICE_APPROVED',
         title: 'Client Approved Price Adjustment',
-        message: `The client has approved your adjusted price of £${booking.adjustedPrice.toFixed(2)}`,
-        actionUrl: `/dashboard/bookings/${id}`,
+        message: `The client has approved your adjusted price of £${ booking.adjustedPrice.toFixed(2) }`,
+        actionUrl: `/ dashboard / bookings / ${ id }`,
         data: { bookingId: id, adjustedPrice: booking.adjustedPrice }
       });
 
@@ -3141,8 +3429,8 @@ async function start() {
         userId: booking.vendorId,
         type: 'PRICE_REJECTED',
         title: 'Client Rejected Price Adjustment',
-        message: `The client has rejected your adjusted price of £${booking.adjustedPrice.toFixed(2)}. ${rejectionReason ? 'Reason: ' + rejectionReason : ''}`,
-        actionUrl: `/dashboard/bookings/${id}`,
+        message: `The client has rejected your adjusted price of £${ booking.adjustedPrice.toFixed(2) }.${ rejectionReason? 'Reason: ' + rejectionReason : ''}`,
+        actionUrl: `/ dashboard / bookings / ${ id }`,
         data: { bookingId: id, adjustedPrice: booking.adjustedPrice, rejectionReason }
       });
 
@@ -3198,8 +3486,8 @@ async function start() {
         userId: booking.clientId,
         type: 'BOOKING_ACCEPTED',
         title: 'Booking Accepted',
-        message: `Your booking has been confirmed. Please proceed with payment to secure your booking.`,
-        actionUrl: `/dashboard/payments/${id}`,
+        message: `Your booking has been confirmed.Please proceed with payment to secure your booking.`,
+        actionUrl: `/ dashboard / payments / ${ id } `,
         data: { bookingId: id, amount: booking.quotedPrice || booking.budget }
       });
 
@@ -3257,8 +3545,8 @@ async function start() {
         userId: booking.clientId,
         type: 'BOOKING_DECLINED',
         title: 'Booking Declined',
-        message: `Unfortunately, the vendor has declined your booking. ${declineReason ? 'Reason: ' + declineReason : ''}`,
-        actionUrl: `/dashboard/bookings`,
+        message: `Unfortunately, the vendor has declined your booking.${ declineReason ? 'Reason: ' + declineReason : '' } `,
+        actionUrl: `/ dashboard / bookings`,
         data: { bookingId: id, declineReason }
       });
 
@@ -3451,7 +3739,7 @@ async function start() {
           currency: 'GBP',
           paymentMethod: 'PAYPAL',
           status: 'PENDING',
-          description: `Payment for booking #${bookingId}`,
+          description: `Payment for booking #${ bookingId }`,
           adminFee: amount * 0.3, // 30% admin fee
           vendorPayout: amount * 0.7, // 70% to vendor
           payoutStatus: 'HELD'
@@ -3462,16 +3750,16 @@ async function start() {
       // and return the approval URL
       const approvalUrl = `https://www.sandbox.paypal.com/checkoutnow?token=MOCK_TOKEN_${payment.id}`;
 
-      return reply.send({
-        success: true,
-        message: 'PayPal order created',
-        data: {
-          paymentId: payment.id,
-          approvalUrl,
-          amount,
-          currency: 'GBP'
-        }
-      });
+        return reply.send({
+          success: true,
+          message: 'PayPal order created',
+          data: {
+            paymentId: payment.id,
+            approvalUrl,
+            amount,
+            currency: 'GBP'
+          }
+        });
 
     } catch (error) {
       app.log.error('Create PayPal order error:', error);
@@ -3892,6 +4180,84 @@ async function start() {
 
     } catch (error) {
       app.log.error('Get vendor clients error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Get specific client details for a vendor
+  app.get("/api/vendor/clients/:clientId", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const vendorId = request.user.userId;
+      const { clientId } = request.params;
+
+      const user = await prisma.user.findUnique({
+        where: { id: vendorId },
+        include: { vendorProfile: true }
+      });
+
+      if (!user || user.activeRole !== 'VENDOR') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Only vendors can view client details'
+        });
+      }
+
+      // Fetch client profile
+      const client = await prisma.user.findUnique({
+        where: { id: clientId },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          phoneNumber: true,
+          avatarUrl: true,
+          createdAt: true
+        }
+      });
+
+      if (!client) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Client not found'
+        });
+      }
+
+      // Fetch all bookings for this client with this vendor
+      const bookings = await prisma.booking.findMany({
+        where: {
+          vendorId: vendorId,
+          clientId: clientId
+        },
+        include: {
+          servicePackage: {
+            select: {
+              title: true,
+              price: true
+            }
+          },
+          payments: true,
+          review: true
+        },
+        orderBy: { eventDate: 'desc' }
+      });
+
+      return reply.send({
+        success: true,
+        data: {
+          client,
+          bookings: bookings.map(b => ({
+            ...b,
+            totalAmount: b.adjustedPrice || b.quotedPrice || b.budget || 0
+          }))
+        }
+      });
+
+    } catch (error) {
+      app.log.error('Get vendor client detail error:', error);
       return reply.status(500).send({
         success: false,
         error: 'Internal server error'
@@ -4823,6 +5189,140 @@ async function start() {
 
     } catch (error) {
       app.log.error('Get my service requests error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Suspend vendor
+  app.post("/api/admin/vendors/:vendorId/suspend", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { vendorId } = request.params;
+      const data = vendorSuspensionSchema.parse(request.body);
+
+      // Check if user is admin
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || user.activeRole !== 'ADMIN') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const vendor = await prisma.vendorProfile.findUnique({
+        where: { id: vendorId }
+      });
+
+      if (!vendor) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Vendor not found'
+        });
+      }
+
+      const updatedVendor = await prisma.vendorProfile.update({
+        where: { id: vendorId },
+        data: {
+          status: 'SUSPENDED',
+          isVerified: false
+        }
+      });
+
+      // Create notification for vendor
+      await prisma.notification.create({
+        data: {
+          userId: vendor.userId,
+          type: 'VENDOR_SUSPENDED',
+          title: 'Account Suspended ⚠️',
+          message: `Your vendor account has been suspended for the following reason: ${data.reason}. Please contact support for more information.`,
+          data: { vendorId, reason: data.reason }
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Vendor suspended successfully',
+        data: { vendor: updatedVendor }
+      });
+
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          success: false,
+          error: 'Validation failed',
+          details: error.errors
+        });
+      }
+      app.log.error('Suspend vendor error:', error);
+      return reply.status(500).send({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
+
+  // Unsuspend vendor
+  app.post("/api/admin/vendors/:vendorId/unsuspend", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const { vendorId } = request.params;
+
+      // Check if user is admin
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!user || user.activeRole !== 'ADMIN') {
+        return reply.status(403).send({
+          success: false,
+          error: 'Admin access required'
+        });
+      }
+
+      const vendor = await prisma.vendorProfile.findUnique({
+        where: { id: vendorId }
+      });
+
+      if (!vendor) {
+        return reply.status(404).send({
+          success: false,
+          error: 'Vendor not found'
+        });
+      }
+
+      const updatedVendor = await prisma.vendorProfile.update({
+        where: { id: vendorId },
+        data: {
+          status: 'APPROVED',
+          isVerified: true
+        }
+      });
+
+      // Create notification for vendor
+      await prisma.notification.create({
+        data: {
+          userId: vendor.userId,
+          type: 'VENDOR_UNSUSPENDED',
+          title: 'Account Reinstated! ✅',
+          message: 'Your vendor account has been unsuspended and reinstated. You can now resume your activities.',
+          data: { vendorId }
+        }
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Vendor unsuspended successfully',
+        data: { vendor: updatedVendor }
+      });
+
+    } catch (error) {
+      app.log.error('Unsuspend vendor error:', error);
       return reply.status(500).send({
         success: false,
         error: 'Internal server error'

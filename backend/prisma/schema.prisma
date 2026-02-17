@@ -83,6 +83,7 @@ model User {
   activeRole          UserRole      @default(CLIENT)
   hasVendorProfile    Boolean       @default(false)
   hasClientProfile    Boolean       @default(true)
+  isActive            Boolean       @default(true)
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
 
@@ -292,6 +293,7 @@ model Payment {
   metadata        Json?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+  payoutDate      DateTime?
   
   booking         Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)

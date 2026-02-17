@@ -14,6 +14,7 @@ import {
     Search,
     ShieldCheck
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 
 const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL;
@@ -22,20 +23,26 @@ interface Payment {
     id: string;
     amount: number;
     vendorPayout: number;
-    payoutStatus: 'HELD' | 'RELEASED';
+    payoutStatus: 'HELD' | 'RELEASED_TO_VENDOR' | 'COMPLETED';
     createdAt: string;
     booking: {
         id: string;
         serviceType: string;
         eventDate: string;
-        vendor: {
+        vendorProfile?: {
             businessName: string;
+            billingDetails?: {
+                accountName: string;
+                bankName: string;
+                accountNumber: string;
+                sortCode?: string;
+                iban?: string;
+                swiftCode?: string;
+            };
         };
         client: {
-            user: {
-                firstName: string;
-                lastName: string;
-            }
+            firstName: string;
+            lastName: string;
         }
     }
 }
@@ -44,6 +51,8 @@ const PayoutManagement = () => {
     const [payments, setPayments] = useState<Payment[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isReleasing, setIsReleasing] = useState<string | null>(null);
+    const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
 
     useEffect(() => {
         fetchHeldPayments();
@@ -67,14 +76,27 @@ const PayoutManagement = () => {
         }
     };
 
-    const handleRelease = async (paymentId: string) => {
-        if (!confirm('Confirm payout release to vendor?')) return;
+    const handleReleaseAction = (payment: Payment) => {
+        setSelectedPayment(payment);
+        setIsModalOpen(true);
+    };
+
+    const confirmRelease = async () => {
+        if (!selectedPayment) return;
+
+        const paymentId = selectedPayment.id;
         setIsReleasing(paymentId);
+        setIsModalOpen(false);
+
         try {
             const token = localStorage.getItem('accessToken');
             const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/admin/payments/${paymentId}/release`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({}) // Ensure body is present for Fastify
             });
 
             if (!response.ok) throw new Error('Release failed');
@@ -84,6 +106,7 @@ const PayoutManagement = () => {
             toast.error('Could not release funds');
         } finally {
             setIsReleasing(null);
+            setSelectedPayment(null);
         }
     };
 
@@ -163,11 +186,11 @@ const PayoutManagement = () => {
                                             <div className="space-y-1">
                                                 <div className="flex items-center text-xs text-gray-900 font-black uppercase truncate max-w-[180px]">
                                                     <Briefcase className="w-3 h-3 mr-2 text-purple-600" />
-                                                    {payment.booking.vendor.businessName}
+                                                    {payment.booking.vendorProfile?.businessName || 'N/A'}
                                                 </div>
                                                 <div className="flex items-center text-xs text-gray-500 font-bold uppercase tracking-tighter">
                                                     <User className="w-3 h-3 mr-2 text-blue-500" />
-                                                    {payment.booking.client.user.firstName} {payment.booking.client.user.lastName}
+                                                    {payment.booking.client.firstName} {payment.booking.client.lastName}
                                                 </div>
                                             </div>
                                         </td>
@@ -185,7 +208,7 @@ const PayoutManagement = () => {
                                         <td className="px-8 py-6 text-right">
                                             <button
                                                 disabled={isReleasing === payment.id}
-                                                onClick={() => handleRelease(payment.id)}
+                                                onClick={() => handleReleaseAction(payment)}
                                                 className="px-6 py-3 bg-slate-900 text-white font-black rounded-xl hover:bg-orange-600 transition-all text-[10px] uppercase tracking-widest flex items-center justify-center space-x-2 ml-auto shadow-xl shadow-slate-200 hover:shadow-orange-200"
                                             >
                                                 {isReleasing === payment.id ? (
@@ -205,6 +228,91 @@ const PayoutManagement = () => {
                     </div>
                 )}
             </div>
+            {/* Payout Confirmation Modal */}
+            <AnimatePresence>
+                {isModalOpen && selectedPayment && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setIsModalOpen(false)}
+                            className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
+                        />
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                            animate={{ scale: 1, opacity: 1, y: 0 }}
+                            exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                            className="bg-white rounded-[40px] w-full max-w-md relative shadow-2xl overflow-hidden"
+                        >
+                            <div className="h-2 w-full bg-gradient-to-r from-orange-500 to-orange-600" />
+
+                            <div className="p-10">
+                                <div className="w-20 h-20 bg-orange-50 rounded-3xl mx-auto mb-6 flex items-center justify-center">
+                                    <ShieldCheck className="w-10 h-10 text-orange-600" />
+                                </div>
+
+                                <h3 className="text-2xl font-black text-slate-900 uppercase text-center mb-2 tracking-tight">
+                                    Confirm Payout
+                                </h3>
+                                <p className="text-slate-500 font-medium text-sm text-center mb-8">
+                                    Verification required for <span className="text-slate-900 font-black">£{selectedPayment.vendorPayout.toLocaleString()}</span> disbursement.
+                                </p>
+
+                                {/* Vendor Bank Details */}
+                                <div className="bg-slate-50 rounded-3xl p-6 mb-8 border border-slate-100">
+                                    <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-4">Vendor Bank Details</p>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <p className="text-[9px] text-slate-400 font-black uppercase">Account Name</p>
+                                            <p className="text-sm font-black text-slate-900 uppercase">
+                                                {selectedPayment.booking.vendorProfile?.billingDetails?.accountName || 'Not Provided'}
+                                            </p>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <p className="text-[9px] text-slate-400 font-black uppercase">Bank</p>
+                                                <p className="text-xs font-bold text-slate-700">
+                                                    {selectedPayment.booking.vendorProfile?.billingDetails?.bankName || 'N/A'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[9px] text-slate-400 font-black uppercase">Account Number</p>
+                                                <p className="text-xs font-bold text-slate-700">
+                                                    {selectedPayment.booking.vendorProfile?.billingDetails?.accountNumber || 'N/A'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        {selectedPayment.booking.vendorProfile?.billingDetails?.sortCode && (
+                                            <div>
+                                                <p className="text-[9px] text-slate-400 font-black uppercase">Sort Code</p>
+                                                <p className="text-xs font-bold text-slate-700">
+                                                    {selectedPayment.booking.vendorProfile?.billingDetails?.sortCode}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-col gap-3">
+                                    <button
+                                        onClick={confirmRelease}
+                                        className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-slate-200 hover:bg-orange-600 transition-all flex items-center justify-center"
+                                    >
+                                        Authorize & Pay 70%
+                                    </button>
+                                    <button
+                                        onClick={() => setIsModalOpen(false)}
+                                        className="w-full py-4 text-slate-400 font-bold uppercase tracking-widest text-xs hover:text-slate-600 transition-colors"
+                                    >
+                                        Cancel Authorization
+                                    </button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 };
