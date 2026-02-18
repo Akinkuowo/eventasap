@@ -276,8 +276,16 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                         {user && (
                             <div className="space-y-4">
                                 <div className="flex items-center space-x-3">
-                                    <div className="w-12 h-12 bg-gradient-to-r from-orange-100 to-purple-100 rounded-full flex items-center justify-center">
-                                        <UserCircle className="w-8 h-8 text-orange-600" />
+                                    <div className="w-12 h-12 bg-gradient-to-r from-orange-100 to-purple-100 rounded-full flex items-center justify-center overflow-hidden">
+                                        {user.avatarUrl ? (
+                                            <img
+                                                src={`${NEXT_PUBLIC_API_URL}${user.avatarUrl}`}
+                                                alt={`${user.firstName} ${user.lastName}`}
+                                                className="w-full h-full object-cover"
+                                            />
+                                        ) : (
+                                            <UserCircle className="w-8 h-8 text-orange-600" />
+                                        )}
                                     </div>
                                     <div>
                                         <h3 className="font-semibold text-gray-900">

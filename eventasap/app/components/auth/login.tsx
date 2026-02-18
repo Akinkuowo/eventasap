@@ -459,40 +459,15 @@ const LoginForm = () => {
                                     )}
                                 </button>
 
-                                {/* Divider */}
-                                <div className="relative">
-                                    <div className="absolute inset-0 flex items-center">
-                                        <div className="w-full border-t border-gray-200"></div>
-                                    </div>
-                                    <div className="relative flex justify-center text-sm">
-                                        <span className="px-4 bg-white text-gray-500">Or continue with</span>
-                                    </div>
-                                </div>
 
-                                {/* Demo Accounts (for development) */}
-                                <div className="space-y-3">
-                                    <button
-                                        onClick={() => {
-                                            setFormData({
-                                                email: 'demo@eventasap.com',
-                                                password: 'demo123',
-                                                rememberMe: false
-                                            });
-                                        }}
-                                        disabled={isLoading}
-                                        className="w-full py-2.5 border border-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors text-sm disabled:opacity-50"
+                                {/* Sign Up Link */}
+                                <div className="text-center mt-6">
+                                    <Link
+                                        href="/signup"
+                                        className="text-sm font-medium text-orange-600 hover:text-orange-700"
                                     >
-                                        Use Demo Account
-                                    </button>
-
-                                    <div className="text-center">
-                                        <Link
-                                            href="/signup"
-                                            className="text-sm font-medium text-orange-600 hover:text-orange-700"
-                                        >
-                                            Don't have an account? Sign up
-                                        </Link>
-                                    </div>
+                                        Don't have an account? Sign up
+                                    </Link>
                                 </div>
                             </div>
 

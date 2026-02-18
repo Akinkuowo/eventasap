@@ -39,6 +39,7 @@ export default function SettingsPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [showVendorSetup, setShowVendorSetup] = useState(false);
+    const [avatarData, setAvatarData] = useState<string | null>(null);
 
     // Location API states
     const [countries, setCountries] = useState<any[]>([]);
@@ -217,21 +218,33 @@ export default function SettingsPage() {
         setIsSaving(true);
         try {
             const token = localStorage.getItem('accessToken');
+            const payload: any = {
+                firstName: user.firstName,
+                lastName: user.lastName,
+                phoneNumber: user.phoneNumber
+            };
+
+            // Include avatar data if changed
+            if (avatarData !== null) {
+                payload.avatarUrl = avatarData;
+            }
+
             const response = await fetch(`${NEXT_AUTH_PATH}/api/user/update-profile`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    firstName: user.firstName,
-                    lastName: user.lastName,
-                    phoneNumber: user.phoneNumber
-                })
+                body: JSON.stringify(payload)
             });
             if (response.ok) {
+                const data = await response.json();
                 toast.success('Profile updated successfully');
-                localStorage.setItem('user', JSON.stringify(user));
+                // Update local user state with new avatar URL
+                const updatedUser = { ...user, avatarUrl: data.data.user.avatarUrl };
+                setUser(updatedUser);
+                localStorage.setItem('user', JSON.stringify(updatedUser));
+                setAvatarData(null); // Reset avatar data after successful upload
             } else {
                 const data = await response.json();
                 toast.error(data.error || 'Failed to update profile');
@@ -450,6 +463,7 @@ export default function SettingsPage() {
                                 handleInputChange={handleInputChange}
                                 handleProfileUpdate={handleProfileUpdate}
                                 isSaving={isSaving}
+                                onAvatarChange={setAvatarData}
                             />
                         )}
                         {activeTab === 'vendor' && (

@@ -258,7 +258,8 @@ const servicePackageSchema = z.object({
 const profileUpdateSchema = z.object({
   firstName: z.string().min(2).optional(),
   lastName: z.string().min(2).optional(),
-  phoneNumber: z.string().optional()
+  phoneNumber: z.string().optional(),
+  avatarUrl: z.string().optional().nullable()
 });
 
 const vendorProfileUpdateSchema = z.object({
@@ -448,6 +449,8 @@ async function start() {
 
   await app.register(helmet, {
     contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginEmbedderPolicy: false
   });
 
   await app.register(rateLimit, {
@@ -475,6 +478,13 @@ async function start() {
   await app.register(fastifyStatic, {
     root: path.join(__dirname, 'proof-of-document'),
     prefix: '/uploads/proofs/',
+  });
+
+  // Serve static files for user avatars
+  await app.register(fastifyStatic, {
+    root: path.join(__dirname, 'uploads', 'avatars'),
+    prefix: '/uploads/avatars/',
+    decorateReply: false
   });
 
   app.get("/health", async () => {
@@ -1143,6 +1153,7 @@ async function start() {
             firstName: user.firstName,
             lastName: user.lastName,
             phoneNumber: user.phoneNumber,
+            avatarUrl: user.avatarUrl,
             activeRole: user.activeRole,
             hasVendorProfile: user.hasVendorProfile,
             hasClientProfile: user.hasClientProfile,
@@ -1169,13 +1180,136 @@ async function start() {
       const userId = request.user.userId;
       const data = profileUpdateSchema.parse(request.body);
 
+      // Prepare update data
+      let updateData = {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        phoneNumber: data.phoneNumber
+      };
+
+      // Handle avatar upload if provided
+      if (data.avatarUrl !== undefined) {
+        if (data.avatarUrl === null) {
+          // User wants to remove avatar
+          const user = await prisma.user.findUnique({ where: { id: userId } });
+
+          // Delete old avatar file if exists
+          if (user.avatarUrl) {
+            const uploadDir = path.join(__dirname, 'uploads', 'avatars');
+            const filename = path.basename(user.avatarUrl);
+            const oldFilePath = path.join(uploadDir, filename);
+            try {
+              await fs.unlink(oldFilePath);
+              app.log.info(`Old avatar deleted: ${filename}`);
+            } catch (unlinkError) {
+              app.log.warn(`Could not delete old avatar file: ${filename}`);
+            }
+          }
+
+          updateData.avatarUrl = null;
+        } else if (data.avatarUrl.startsWith('data:')) {
+          // New avatar upload (base64)
+          try {
+            // Ensure upload directory exists
+            const uploadDir = path.join(__dirname, 'uploads', 'avatars');
+            try {
+              await fs.access(uploadDir);
+            } catch {
+              await fs.mkdir(uploadDir, { recursive: true });
+              app.log.info('Created uploads/avatars directory');
+            }
+
+            // Extract base64 data
+            const matches = data.avatarUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+
+            if (matches && matches.length === 3) {
+              const mimeType = matches[1];
+              const base64Data = matches[2];
+
+              // Validate base64 string length before converting (~7.5MB base64 = ~5MB file)
+              if (base64Data.length > 7.5 * 1024 * 1024) {
+                return reply.status(400).send({
+                  success: false,
+                  error: 'File size exceeds 5MB limit'
+                });
+              }
+
+              const buffer = Buffer.from(base64Data, 'base64');
+
+              // Validate file size (5MB limit)
+              if (buffer.length > 5 * 1024 * 1024) {
+                return reply.status(400).send({
+                  success: false,
+                  error: 'File size exceeds 5MB limit'
+                });
+              }
+
+              // Determine file extension
+              const extensionMap = {
+                'image/png': 'png',
+                'image/jpeg': 'jpg',
+                'image/jpg': 'jpg',
+                'image/webp': 'webp'
+              };
+              const extension = extensionMap[mimeType] || 'bin';
+
+              // Validate file type
+              if (!['png', 'jpg', 'jpeg', 'webp'].includes(extension)) {
+                return reply.status(400).send({
+                  success: false,
+                  error: 'Invalid file type. Only PNG, JPG, and WEBP are allowed'
+                });
+              }
+
+              // Generate unique filename
+              const timestamp = Date.now();
+              const randomString = crypto.randomBytes(8).toString('hex');
+              const filename = `avatar-${userId}-${timestamp}-${randomString}.${extension}`;
+              const filepath = path.join(uploadDir, filename);
+
+              // Save file
+              await fs.writeFile(filepath, buffer);
+              app.log.info(`Avatar saved: ${filename}`);
+
+              // Delete old avatar file if exists
+              const user = await prisma.user.findUnique({ where: { id: userId } });
+              if (user.avatarUrl) {
+                const oldFilename = path.basename(user.avatarUrl);
+                const oldFilePath = path.join(uploadDir, oldFilename);
+                try {
+                  await fs.unlink(oldFilePath);
+                  app.log.info(`Old avatar deleted: ${oldFilename}`);
+                } catch (unlinkError) {
+                  app.log.warn(`Could not delete old avatar file: ${oldFilename}`);
+                }
+              }
+
+              // Update data with new filename
+              updateData.avatarUrl = `/uploads/avatars/${filename}`;
+
+            } else {
+              return reply.status(400).send({
+                success: false,
+                error: 'Invalid base64 format'
+              });
+            }
+          } catch (fileError) {
+            app.log.error('File saving error:', fileError);
+            return reply.status(500).send({
+              success: false,
+              error: 'Failed to save avatar image',
+              details: process.env.NODE_ENV === 'development' ? fileError.message : undefined
+            });
+          }
+        } else {
+          // avatarUrl is a regular URL (already uploaded), keep it as is
+          updateData.avatarUrl = data.avatarUrl;
+        }
+      }
+
       const updatedUser = await prisma.user.update({
         where: { id: userId },
-        data: {
-          firstName: data.firstName,
-          lastName: data.lastName,
-          phoneNumber: data.phoneNumber
-        }
+        data: updateData
       });
 
       return reply.send({
@@ -4572,17 +4706,14 @@ async function start() {
   // Get all packages (public)
   app.get("/api/packages", async (request, reply) => {
     try {
-      const { category, minPrice, maxPrice, search, page = 1, limit = 12 } = request.query;
+      const { category, minPrice, maxPrice, search, location, date, page = 1, limit = 12 } = request.query;
 
       let whereClause = {
         isActive: true
       };
 
-      if (category) {
-        whereClause.vendor = {
-          category: category
-        };
-      }
+      // Removed original category logic to merge with new vendor filter block below
+
 
       if (minPrice) {
         whereClause.price = { ...whereClause.price, gte: parseFloat(minPrice) };
@@ -4597,6 +4728,50 @@ async function start() {
           { title: { contains: search, mode: 'insensitive' } },
           { description: { contains: search, mode: 'insensitive' } }
         ];
+      }
+
+      // Vendor Filters (Category, Location, Availability)
+      if (category || location || date) {
+        whereClause.vendor = {
+          AND: []
+        };
+
+        if (category) {
+          whereClause.vendor.AND.push({ category });
+        }
+
+        if (location) {
+          whereClause.vendor.AND.push({
+            OR: [
+              { city: { contains: location, mode: 'insensitive' } },
+              { state: { contains: location, mode: 'insensitive' } },
+              { country: { contains: location, mode: 'insensitive' } }
+            ]
+          });
+        }
+
+        if (date) {
+          const checkDate = new Date(date);
+          // Set to start of day
+          checkDate.setHours(0, 0, 0, 0);
+
+          const nextDate = new Date(checkDate);
+          nextDate.setDate(nextDate.getDate() + 1);
+
+          whereClause.vendor.AND.push({
+            bookings: {
+              none: {
+                eventDate: {
+                  gte: checkDate,
+                  lt: nextDate
+                },
+                status: {
+                  in: ['CONFIRMED', 'PAID']
+                }
+              }
+            }
+          });
+        }
       }
 
       const skip = (page - 1) * limit;
@@ -5207,6 +5382,115 @@ async function start() {
         success: false,
         error: 'Internal server error'
       });
+    }
+  });
+
+
+  // AI: Vendor Suggestions
+  app.post("/api/ai/suggest-vendors", async (request, reply) => {
+    try {
+      const { eventType, budget, location, preferences } = request.body;
+      const prompt = `Suggest 3 vendor categories and specific search terms for a "${eventType}" in "${location}" with a budget of ${budget} and preferences: "${preferences}". Return a JSON array with objects containing "category", "searchTerm", and "reason". Do not use markdown formatting.`;
+
+      const geminiApiKey = process.env.GEMINI_API_KEY;
+      if (!geminiApiKey) return reply.send({ success: false, error: 'AI not configured' });
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { response_mime_type: "application/json" } })
+      });
+
+      const result = await response.json();
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      const suggestions = text ? JSON.parse(text) : [];
+
+      return reply.send({ success: true, data: suggestions });
+    } catch (error) {
+      app.log.error('AI Vendor Suggestion Error:', error);
+      return reply.status(500).send({ success: false, error: 'AI Error' });
+    }
+  });
+
+  // AI: Package Recommendations
+  app.post("/api/ai/suggest-package", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const { vendorCategory, businessDescription } = request.body;
+      const prompt = `Generate 3 service package tiers (Basic, Standard, Premium) for a "${vendorCategory}" vendor described as "${businessDescription}". Return a JSON array with objects containing "title", "description", "price" (number), "duration" (hours number), and "currency" (e.g. "GBP"). Do not use markdown formatting.`;
+
+      const geminiApiKey = process.env.GEMINI_API_KEY;
+      if (!geminiApiKey) return reply.send({ success: false, error: 'AI not configured' });
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { response_mime_type: "application/json" } })
+      });
+
+      const result = await response.json();
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      const packages = text ? JSON.parse(text) : [];
+
+      return reply.send({ success: true, data: packages });
+    } catch (error) {
+      app.log.error('AI Package Suggestion Error:', error);
+      return reply.status(500).send({ success: false, error: 'AI Error' });
+    }
+  });
+
+  // AI: Pricing Insight
+  app.post("/api/ai/pricing-insight", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const { serviceType, location, experienceLevel } = request.body;
+      const prompt = `Suggest a competitive price range for a "${serviceType}" service in "${location}" for a vendor with "${experienceLevel}" experience. Return a JSON object with "minPrice" (number), "maxPrice" (number), "currency", and "reasoning". Do not use markdown formatting.`;
+
+      const geminiApiKey = process.env.GEMINI_API_KEY;
+      if (!geminiApiKey) return reply.send({ success: false, error: 'AI not configured' });
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { response_mime_type: "application/json" } })
+      });
+
+      const result = await response.json();
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      const insight = text ? JSON.parse(text) : null;
+
+      return reply.send({ success: true, data: insight });
+    } catch (error) {
+      app.log.error('AI Pricing Insight Error:', error);
+      return reply.status(500).send({ success: false, error: 'AI Error' });
+    }
+  });
+
+  // AI: Forecasting
+  app.get("/api/ai/forecasting", { preHandler: [authenticate] }, async (request, reply) => {
+    try {
+      const userId = request.user.userId;
+      const vendor = await prisma.vendorProfile.findUnique({ where: { userId } });
+
+      if (!vendor) return reply.status(404).send({ success: false, error: 'Vendor profile not found' });
+
+      const prompt = `Predict demand trends for "${vendor.category}" vendors in "${vendor.city || 'general'}" for the next 3 months. Return a JSON object with "trend" (Up/Down/Stable), "peakMonths" (array of strings), and "advice" (string). Do not use markdown formatting.`;
+
+      const geminiApiKey = process.env.GEMINI_API_KEY;
+      if (!geminiApiKey) return reply.send({ success: false, error: 'AI not configured' });
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { response_mime_type: "application/json" } })
+      });
+
+      const result = await response.json();
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      const forecast = text ? JSON.parse(text) : null;
+
+      return reply.send({ success: true, data: forecast });
+    } catch (error) {
+      app.log.error('AI Forecasting Error:', error);
+      return reply.status(500).send({ success: false, error: 'AI Error' });
     }
   });
 
