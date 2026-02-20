@@ -7,11 +7,57 @@ import {
     Twitter,
     Instagram,
     Linkedin,
-    ChevronDown
+    ChevronDown,
+    Loader2
 } from 'lucide-react';
 import Image from 'next/image';
+import { toast } from 'sonner';
+
+const NEXT_PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 const Footer = () => {
+    const [email, setEmail] = React.useState('');
+    const [isLoading, setIsLoading] = React.useState(false);
+
+    const handleSubscribe = async (e: React.FormEvent) => {
+        e.preventDefault();
+
+        if (!email) {
+            toast.error('Please enter your email address');
+            return;
+        }
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            toast.error('Please enter a valid email address');
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/newsletter/subscribe`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ email }),
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                toast.success('Successfully subscribed to our newsletter!');
+                setEmail('');
+            } else {
+                toast.error(data.error || 'Failed to subscribe. Please try again.');
+            }
+        } catch (error) {
+            toast.error('Network error. Please try again.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     return (
         <footer className="bg-[#1a1a1a] text-white pt-20 pb-10">
             <div className="container mx-auto px-4">
@@ -19,16 +65,23 @@ const Footer = () => {
                 <div className="mb-16 border-b border-white/5 pb-16">
                     <div className="max-w-xl">
                         <h3 className="text-2xl font-bold mb-6">Subscribe</h3>
-                        <div className="relative group">
+                        <form onSubmit={handleSubscribe} className="relative group">
                             <input
                                 type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                disabled={isLoading}
                                 placeholder="Enter your email address"
-                                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all placeholder:text-gray-500"
+                                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all placeholder:text-gray-500 disabled:opacity-50"
                             />
-                            <button className="absolute right-2 top-2 bottom-2 px-6 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold transition-all active:scale-95">
-                                Join Now
+                            <button
+                                type="submit"
+                                disabled={isLoading}
+                                className="absolute right-2 top-2 bottom-2 px-6 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-w-[120px]"
+                            >
+                                {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Join Now'}
                             </button>
-                        </div>
+                        </form>
                     </div>
                 </div>
 

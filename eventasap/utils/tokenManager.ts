@@ -161,3 +161,44 @@ export class AuthApiClient {
     }
 }
 
+// Check if user should be auto-logged in (Remember Me active and not expired)
+export const isRememberMeActive = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const rememberMe = localStorage.getItem('rememberMe');
+    const expiryStr = localStorage.getItem('rememberMeExpiry');
+    if (!rememberMe || !expiryStr) return false;
+    return new Date(expiryStr) > new Date();
+};
+
+// Attempt silent re-login using stored refresh token.
+// Returns true if user is now authenticated.
+export const checkAndAutoLogin = async (): Promise<boolean> => {
+    if (typeof window === 'undefined') return false;
+
+    // Already have a valid access token - no action needed
+    const accessToken = localStorage.getItem('accessToken');
+    if (accessToken && !isTokenExpired(accessToken)) return true;
+
+    // No remember me set - don't auto-login
+    if (!isRememberMeActive()) return false;
+
+    // Refresh token exists - try to get a new access token silently
+    const refreshToken = localStorage.getItem('refreshToken');
+    if (!refreshToken) return false;
+
+    try {
+        const newToken = await refreshAuthToken();
+        return !!newToken;
+    } catch {
+        return false;
+    }
+};
+
+// Clear all auth data including remember me
+export const clearAuth = () => {
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
+    localStorage.removeItem('user');
+    localStorage.removeItem('rememberMe');
+    localStorage.removeItem('rememberMeExpiry');
+};

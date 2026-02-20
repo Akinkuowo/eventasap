@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import {
     useStripe,
     useElements,
@@ -13,9 +14,11 @@ import { Loader2, ArrowRight, ShieldCheck } from 'lucide-react';
 interface PaymentFormProps {
     amount: number;
     vendorName: string;
+    onSuccess?: () => void;
 }
 
-export default function PaymentForm({ amount, vendorName }: PaymentFormProps) {
+export default function PaymentForm({ amount, vendorName, onSuccess }: PaymentFormProps) {
+    const router = useRouter();
     const stripe = useStripe();
     const elements = useElements();
 
@@ -26,31 +29,32 @@ export default function PaymentForm({ amount, vendorName }: PaymentFormProps) {
         e.preventDefault();
 
         if (!stripe || !elements) {
-            // Stripe.js has not yet loaded.
             return;
         }
 
         setIsLoading(true);
+        setMessage(null);
 
-        const { error } = await stripe.confirmPayment({
+        const { error, paymentIntent } = await stripe.confirmPayment({
             elements,
             confirmParams: {
-                // Make sure to change this to your payment completion page
-                return_url: `${window.location.origin}/dashboard/payments/success`,
+                return_url: `${window.location.origin}/dashboard/payments?status=success`,
             },
+            redirect: 'if_required'
         });
 
-        // This point will only be reached if there is an immediate error when
-        // confirming the payment. Otherwise, your customer will be redirected to
-        // your `return_url`. For some payment methods like iDEAL, your customer will
-        // be redirected to an intermediate site first to authorize the payment, then
-        // redirected to the `return_url`.
-        if (error.type === "card_error" || error.type === "validation_error") {
-            setMessage(error.message || "An unexpected error occurred.");
-            toast.error(error.message);
-        } else {
-            setMessage("An unexpected error occurred.");
-            toast.error("An unexpected error occurred.");
+        if (error) {
+            if (error.type === 'card_error' || error.type === 'validation_error') {
+                setMessage(error.message || 'An unexpected error occurred.');
+                toast.error(error.message);
+            } else {
+                setMessage('An unexpected error occurred. Please try again.');
+                toast.error('Payment failed. Please try again.');
+            }
+        } else if (paymentIntent && paymentIntent.status === 'succeeded') {
+            toast.success('Payment successful! Redirecting to your bookings...');
+            onSuccess?.();
+            router.push('/dashboard/bookings');
         }
 
         setIsLoading(false);
@@ -58,10 +62,8 @@ export default function PaymentForm({ amount, vendorName }: PaymentFormProps) {
 
     return (
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
-            <LinkAuthenticationElement
-                id="link-authentication-element"
-            />
-            <PaymentElement id="payment-element" options={{ layout: "tabs" }} />
+            <LinkAuthenticationElement id="link-authentication-element" />
+            <PaymentElement id="payment-element" options={{ layout: 'tabs' }} />
 
             <div className="bg-orange-50 rounded-xl p-4 flex items-start space-x-3 mt-4">
                 <ShieldCheck className="w-5 h-5 text-orange-600 mt-0.5" />

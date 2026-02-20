@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements } from '@stripe/react-stripe-js';
 import {
     CreditCard,
     History,
@@ -14,6 +16,9 @@ import PaymentForm from '@/app/components/dashboard/payment-form';
 import PaymentHistory from '@/app/components/dashboard/payment-history';
 import { fetchWithAuth } from '@/utils/tokenManager';
 
+// Initialize Stripe outside of component to avoid re-creating on renders
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
+
 export default function PaymentsPage() {
     const searchParams = useSearchParams();
     const bookingId = searchParams.get('booking');
@@ -22,6 +27,8 @@ export default function PaymentsPage() {
     const [booking, setBooking] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [clientSecret, setClientSecret] = useState<string | null>(null);
+    const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
 
     useEffect(() => {
         if (bookingId) {
@@ -38,6 +45,11 @@ export default function PaymentsPage() {
 
             if (data.success) {
                 setBooking(data.data.booking);
+                // Once we have the booking, create a PaymentIntent
+                await createPaymentIntent(
+                    data.data.booking.quotedPrice || data.data.booking.budget,
+                    data.data.booking.id
+                );
             } else {
                 setError(data.error || 'Failed to fetch booking details');
             }
@@ -48,6 +60,44 @@ export default function PaymentsPage() {
         }
     };
 
+    const createPaymentIntent = async (amount: number, bId: string) => {
+        setPaymentIntentLoading(true);
+        try {
+            const response = await fetchWithAuth(
+                `${process.env.NEXT_PUBLIC_API_URL}/api/payments`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bookingId: bId })
+                }
+            );
+            const data = await response.json();
+            if (data.success && data.clientSecret) {
+                setClientSecret(data.clientSecret);
+            } else {
+                setError(data.error || 'Failed to initialize payment');
+            }
+        } catch (err) {
+            setError('Failed to set up payment. Please try again.');
+        } finally {
+            setPaymentIntentLoading(false);
+        }
+    };
+
+    const elementsOptions = clientSecret
+        ? {
+            clientSecret,
+            appearance: {
+                theme: 'stripe' as const,
+                variables: {
+                    colorPrimary: '#f97316',
+                    colorText: '#111827',
+                    borderRadius: '12px'
+                }
+            }
+        }
+        : undefined;
+
     return (
         <div className="space-y-8">
             {/* Header section with branding */}
@@ -57,13 +107,11 @@ export default function PaymentsPage() {
                         <Sparkles className="w-4 h-4" />
                         <span>Financial Center</span>
                     </div>
-                    <h1 className="text-3xl md:text-4xl font-black mb-4">Payments & Transactions</h1>
+                    <h1 className="text-3xl md:text-4xl font-black mb-4">Payments &amp; Transactions</h1>
                     <p className="text-orange-50 text-lg opacity-90 max-w-xl">
                         Securely pay for your event services and keep track of your financial history.
                     </p>
                 </div>
-
-                {/* Decorative background elements */}
                 <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl"></div>
                 <div className="absolute bottom-0 left-10 w-32 h-32 bg-orange-400/20 rounded-full translate-y-1/2 blur-2xl"></div>
             </div>
@@ -74,8 +122,8 @@ export default function PaymentsPage() {
                     <button
                         onClick={() => setActiveTab('pay')}
                         className={`flex items-center space-x-2 px-6 py-2.5 rounded-xl font-bold transition-all ${activeTab === 'pay'
-                                ? 'bg-white text-orange-600 shadow-sm'
-                                : 'text-gray-500 hover:text-gray-700'
+                            ? 'bg-white text-orange-600 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700'
                             }`}
                     >
                         <CreditCard className="w-4 h-4" />
@@ -85,8 +133,8 @@ export default function PaymentsPage() {
                 <button
                     onClick={() => setActiveTab('history')}
                     className={`flex items-center space-x-2 px-6 py-2.5 rounded-xl font-bold transition-all ${activeTab === 'history'
-                            ? 'bg-white text-orange-600 shadow-sm'
-                            : 'text-gray-500 hover:text-gray-700'
+                        ? 'bg-white text-orange-600 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
                         }`}
                 >
                     <History className="w-4 h-4" />
@@ -98,10 +146,12 @@ export default function PaymentsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2">
                     {activeTab === 'pay' && bookingId ? (
-                        isLoading ? (
+                        isLoading || paymentIntentLoading ? (
                             <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
                                 <Loader2 className="w-10 h-10 animate-spin text-orange-500 mx-auto mb-4" />
-                                <p className="text-gray-600">Loading booking information...</p>
+                                <p className="text-gray-600">
+                                    {isLoading ? 'Loading booking information...' : 'Setting up secure payment...'}
+                                </p>
                             </div>
                         ) : error ? (
                             <div className="bg-white rounded-2xl border border-red-100 p-12 text-center space-y-4">
@@ -115,14 +165,25 @@ export default function PaymentsPage() {
                                     Go back to bookings
                                 </button>
                             </div>
-                        ) : booking ? (
-                            <PaymentForm
-                                bookingId={bookingId}
-                                amount={booking.quotedPrice || booking.budget}
-                                vendorName={booking.vendor?.vendorProfile?.businessName || `${booking.vendor?.firstName} ${booking.vendor?.lastName}`}
-                                serviceType={booking.serviceType}
-                                onSuccess={() => setActiveTab('history')}
-                            />
+                        ) : booking && clientSecret ? (
+                            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                                <div className="px-6 pt-6 pb-2">
+                                    <h3 className="text-lg font-bold text-gray-900">Complete your payment</h3>
+                                    <p className="text-sm text-gray-500 mt-1">
+                                        Paying for: <span className="font-semibold text-gray-700">{booking.serviceType}</span> with{' '}
+                                        <span className="font-semibold text-gray-700">
+                                            {booking.vendor?.vendorProfile?.businessName || `${booking.vendor?.firstName} ${booking.vendor?.lastName}`}
+                                        </span>
+                                    </p>
+                                </div>
+                                <Elements stripe={stripePromise} options={elementsOptions}>
+                                    <PaymentForm
+                                        amount={booking.quotedPrice || booking.budget}
+                                        vendorName={booking.vendor?.vendorProfile?.businessName || `${booking.vendor?.firstName} ${booking.vendor?.lastName}`}
+                                        onSuccess={() => setActiveTab('history')}
+                                    />
+                                </Elements>
+                            </div>
                         ) : null
                     ) : (
                         <PaymentHistory />
@@ -183,7 +244,6 @@ export default function PaymentsPage() {
     );
 }
 
-// Minimal arrow icon for the sidebar
 function ArrowRight({ className }: { className?: string }) {
     return (
         <svg fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={className}>

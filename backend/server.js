@@ -838,6 +838,15 @@ async function start() {
   app.post("/api/auth/login", async (request, reply) => {
     try {
       const data = loginSchema.parse(request.body);
+      const rememberMe = !!request.body.rememberMe;
+      // 30 days for remember me, 7 days default
+      const refreshTokenTTL = rememberMe
+        ? 30 * 24 * 60 * 60 * 1000
+        : 7 * 24 * 60 * 60 * 1000;
+      // 30 days for session when remember me active, 24h otherwise
+      const sessionTTL = rememberMe
+        ? 30 * 24 * 60 * 60 * 1000
+        : 24 * 60 * 60 * 1000;
 
       const user = await prisma.user.findUnique({
         where: { email: data.email },
@@ -879,7 +888,7 @@ async function start() {
         data: {
           userId: user.id,
           token: refreshToken,
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+          expiresAt: new Date(Date.now() + refreshTokenTTL)
         }
       });
 
@@ -889,7 +898,7 @@ async function start() {
           token: accessToken,
           ipAddress: request.ip,
           userAgent: request.headers['user-agent'],
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          expiresAt: new Date(Date.now() + sessionTTL)
         }
       });
 
@@ -911,7 +920,8 @@ async function start() {
             clientProfile: user.clientProfile
           },
           accessToken,
-          refreshToken
+          refreshToken,
+          rememberMe
         }
       });
 
@@ -5493,6 +5503,46 @@ async function start() {
       return reply.status(500).send({ success: false, error: 'AI Error' });
     }
   });
+
+  // ==========================================
+  // Newsletter Subscribe endpoints
+  // ==========================================
+
+  app.post("/api/newsletter/subscribe", async (request, reply) => {
+    try {
+      const { email } = request.body;
+      if (!email || typeof email !== 'string') {
+        return reply.status(400).send({ success: false, error: 'Valid email is required' });
+      }
+
+      // Check if already subscribed
+      const existing = await prisma.newsletterSubscriber.findUnique({
+        where: { email }
+      });
+
+      if (existing) {
+        if (!existing.isActive) {
+          // Resubscribe
+          await prisma.newsletterSubscriber.update({
+            where: { email },
+            data: { isActive: true }
+          });
+        }
+        return reply.send({ success: true, message: 'Successfully subscribed to the newsletter' });
+      }
+
+      // Create new subscription
+      await prisma.newsletterSubscriber.create({
+        data: { email }
+      });
+
+      return reply.send({ success: true, message: 'Successfully subscribed to the newsletter' });
+    } catch (error) {
+      app.log.error('Newsletter subscription error:', error);
+      return reply.status(500).send({ success: false, error: 'Internal server error' });
+    }
+  });
+
 
   // Error handler
   app.setErrorHandler((error, request, reply) => {

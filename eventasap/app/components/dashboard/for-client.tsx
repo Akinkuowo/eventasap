@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Search,
     Filter,
@@ -49,19 +49,38 @@ interface ServicePackage {
 
 export default function ForClient() {
     const router = useRouter();
+    const searchParams = useSearchParams();
+
     const [packages, setPackages] = useState<ServicePackage[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [category, setCategory] = useState<string>('');
-    const [location, setLocation] = useState('');
-    const [date, setDate] = useState('');
-    const [priceRange, setPriceRange] = useState({ min: '', max: '' });
+    // Initialize state from URL params so ?search=... works on load
+    const [searchQuery, setSearchQuery] = useState(searchParams.get('search') || '');
+    const [category, setCategory] = useState<string>(searchParams.get('category') || '');
+    const [location, setLocation] = useState(searchParams.get('location') || '');
+    const [date, setDate] = useState(searchParams.get('date') || '');
+    const [priceRange, setPriceRange] = useState({
+        min: searchParams.get('minPrice') || '',
+        max: searchParams.get('maxPrice') || ''
+    });
     const [pagination, setPagination] = useState({
         page: 1,
         totalPages: 1,
         total: 0
     });
+
+    // Sync filters back to URL so results are shareable / bookmarkable
+    const syncUrl = useCallback((query: string, cat: string, loc: string, dt: string, minP: string, maxP: string) => {
+        const params = new URLSearchParams();
+        if (query) params.set('search', query);
+        if (cat) params.set('category', cat);
+        if (loc) params.set('location', loc);
+        if (dt) params.set('date', dt);
+        if (minP) params.set('minPrice', minP);
+        if (maxP) params.set('maxPrice', maxP);
+        const newUrl = `/clients${params.toString() ? `?${params.toString()}` : ''}`;
+        router.replace(newUrl, { scroll: false });
+    }, [router]);
 
     const fetchPackages = useCallback(async (page = 1) => {
         setIsLoading(true);
@@ -99,10 +118,11 @@ export default function ForClient() {
 
     useEffect(() => {
         const timer = setTimeout(() => {
+            syncUrl(searchQuery, category, location, date, priceRange.min, priceRange.max);
             fetchPackages(1);
-        }, 500);
+        }, 400);
         return () => clearTimeout(timer);
-    }, [searchQuery, category, location, date, priceRange, fetchPackages]);
+    }, [searchQuery, category, location, date, priceRange, fetchPackages, syncUrl]);
 
     const handlePageChange = (newPage: number) => {
         if (newPage >= 1 && newPage <= pagination.totalPages) {

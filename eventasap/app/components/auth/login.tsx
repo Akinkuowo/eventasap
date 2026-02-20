@@ -97,7 +97,8 @@ const LoginForm = () => {
                 },
                 body: JSON.stringify({
                     email: formData.email,
-                    password: formData.password
+                    password: formData.password,
+                    rememberMe: formData.rememberMe
                 }),
             });
 
@@ -110,6 +111,16 @@ const LoginForm = () => {
                 localStorage.setItem('accessToken', data.data.accessToken);
                 localStorage.setItem('refreshToken', data.data.refreshToken);
                 localStorage.setItem('user', JSON.stringify(data.data.user));
+
+                // Store rememberMe flag and expiry for auto-login on next visit
+                if (formData.rememberMe) {
+                    localStorage.setItem('rememberMe', 'true');
+                    const expiryDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+                    localStorage.setItem('rememberMeExpiry', expiryDate.toISOString());
+                } else {
+                    localStorage.removeItem('rememberMe');
+                    localStorage.removeItem('rememberMeExpiry');
+                }
 
                 // Redirect to dashboard immediately
                 setTimeout(() => {

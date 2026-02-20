@@ -33,6 +33,7 @@ import { toast } from 'sonner';
 import Image from 'next/image';
 import Link from 'next/link';
 import NotificationBell from '../notifications/notification-bell';
+import { checkAndAutoLogin, clearAuth } from '@/utils/tokenManager';
 
 interface DashboardLayoutProps {
     children: React.ReactNode;
@@ -60,11 +61,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
 
     const fetchUserData = async () => {
         try {
-            const token = localStorage.getItem('accessToken');
-            if (!token) {
+            // Try auto-login via remembered refresh token if access token is missing/expired
+            const isAuthenticated = await checkAndAutoLogin();
+            if (!isAuthenticated) {
                 router.push('/login');
                 return null;
             }
+
+            const token = localStorage.getItem('accessToken');
 
             const response = await fetch(`${NEXT_PUBLIC_API_URL}/api/auth/me`, {
                 headers: {
@@ -123,9 +127,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
                 body: JSON.stringify({ refreshToken })
             });
 
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('refreshToken');
-            localStorage.removeItem('user');
+            // Clear all tokens + rememberMe flags
+            clearAuth();
 
             toast.success('Logged out successfully');
             router.push('/login');

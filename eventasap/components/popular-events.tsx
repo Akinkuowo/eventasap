@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
     Users,
     Briefcase,
@@ -60,6 +60,7 @@ const eventTypes = [
 
 const PopularEvents = () => {
     const router = useRouter();
+    const [customSearch, setCustomSearch] = useState('');
 
     const handleEventClick = (eventName: string) => {
         const params = new URLSearchParams();
@@ -67,6 +68,14 @@ const PopularEvents = () => {
         router.push(`/clients?${params.toString()}`);
     };
 
+    const handleCustomSearch = () => {
+        const query = customSearch.trim();
+        if (query) {
+            handleEventClick(query);
+        } else {
+            router.push('/clients');
+        }
+    };
     return (
         <section className="py-24 bg-white">
             <div className="container mx-auto px-4">
@@ -127,14 +136,16 @@ const PopularEvents = () => {
                             <input
                                 type="text"
                                 placeholder="Type your event..."
-                                className="w-full pl-12 pr-4 py-4 bg-white/10 border border-white/20 rounded-2xl text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
+                                value={customSearch}
+                                onChange={(e) => setCustomSearch(e.target.value)}
                                 onKeyDown={(e) => {
-                                    if (e.key === 'Enter') handleEventClick((e.target as HTMLInputElement).value);
+                                    if (e.key === 'Enter') handleCustomSearch();
                                 }}
+                                className="w-full pl-12 pr-4 py-4 bg-white/10 border border-white/20 rounded-2xl text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all"
                             />
                         </div>
                         <button
-                            onClick={() => router.push('/clients')}
+                            onClick={handleCustomSearch}
                             className="px-8 py-4 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl font-bold transition-all shadow-lg shadow-orange-900/20 active:scale-95"
                         >
                             Find Vendors
